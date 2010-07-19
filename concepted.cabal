@@ -1,0 +1,27 @@
+Name:                concepted
+Version:             0.1
+Synopsis:            Small gtk + cairo program to quickly edit concept maps
+Description:         Concepted is a small program written with the gtk and
+                     cairo libraries to quickly edit concept maps.
+License:             BSD3
+License-file:        LICENSE
+Author:              Vo Minh Thu <noteed@gmail.com>
+Maintainer:          Vo Minh Thu <noteed@gmail.com>
+Stability:           Experimental
+Category:            Graphics
+Build-type:          Simple
+Extra-source-files:  README
+Cabal-version:       >=1.6
+
+Source-repository head
+  type: git
+  location: git://github.com/noteed/concepted.git
+
+executable concepted
+  main-is:            concepted.hs
+
+  build-depends:      base >= 4.0, parsec, pretty, gtk, cairo
+
+  ghc-options:        -Wall
+                      -O2
+                      -fno-warn-unused-do-bind
