@@ -1,3 +1,4 @@
+{-# Language RankNTypes #-}
 module Main where
 
 import System.Environment (getArgs)
@@ -16,7 +17,7 @@ import Control.Monad
 import Data.List
 import Data.Maybe
 import Text.PrettyPrint hiding (char, render)
-import Text.ParserCombinators.Parsec
+import Text.ParserCombinators.Parsec hiding (setPosition)
 
 -- TODO: it would be nice to automatically reload a file when it
 -- is externally modified.
@@ -28,7 +29,6 @@ import Text.ParserCombinators.Parsec
 -- TODO: when multiple items get selected (because there are stacked
 -- at same place), the selection should cycle between them (one) and
 -- all.
--- TODO: add snap-to-grid when moving things around.
 -- TODO: display the indice of each concept, link, handle.
 -- TODO: add zoom operation.
 
@@ -90,6 +90,16 @@ main' initialState = do
       _ -> return ()
     return True
 
+  onButtonRelease canvas $ \e -> do
+    case eventButton e of
+      LeftButton -> do
+        s <- takeMVar sVar
+        s' <- myLmbRelease (eventX e) (eventY e) s
+        putMVar sVar s'
+        widgetQueueDraw canvas
+      _ -> return ()
+    return True
+
   onMotionNotify canvas False $ \e -> do
     s <- takeMVar sVar
     x <- readIORef xRef
@@ -127,6 +137,7 @@ data S = S
   , filename :: Maybe String
   , panX :: Double
   , panY :: Double
+  , snapTreshold :: Maybe Int
   , concepts :: [Concept]
   , links :: [Link]
   , handles :: [Handle]
@@ -143,6 +154,7 @@ cleanState = S
   , filename = Nothing
   , panX = 0
   , panY = 0
+  , snapTreshold = Just 10
   , concepts = []
   , links = []
   , handles = []
@@ -158,6 +170,7 @@ myState = S
   , filename = Nothing
   , panX = 0.0
   , panY = 0.0
+  , snapTreshold = Just 10
   , concepts =
   [ Rectangle 0.0 0.0 (1.0,0.7,0.0,1.0) 100.0 40.0
     , Text 100.0 100.0 (0.0,0.0,0.0,1.0) 20.0 25 "Concepted"
@@ -214,33 +227,21 @@ myLmbPress x y s = do
       sell = select IdLink (x - panX s) (y - panY s) (links s)
   return $ s { selection = concat [selc,selh,sell] }
 
-myMotion :: Bool -> Double -> Double -> S -> IO S
-myMotion lmb dx dy s = do
-  if lmb
-    then do
-      let cs = zip ([0..]) (concepts s)
-          ls = zip ([0..]) (links s)
-          hs = zip ([0..]) (handles s)
-          sel = selection s
-          f (b,n) = if IdConcept b `elem` (sel `addFollow` follow s) then move dx dy n else n
-          g (b,n) = if IdLink b    `elem` (sel `addFollow` follow s) then move dx dy n else n
-          h (b,n) = if IdHandle b  `elem` (sel `addFollow` follow s) then move dx dy n else n
-          cs' = map f cs
-          ls' = map g ls
-          hs' = map h hs
-      if null sel
-        then return s { panX = panX s + dx, panY = panY s + dy }
-        else return $ s
-          { concepts = cs'
-          , links = ls'
-          , handles = hs'
-          }
-    else return s
+myLmbRelease :: Double -> Double -> S -> IO S
+myLmbRelease _ _ s = do
+  case selection s of
+    [] -> return s
+    _ -> case snapTreshold s of
+      Nothing -> return s
+      Just t -> return $ snapSelection t s
 
-addFollow :: [Id] -> [(Id,Id)] -> [Id]
-addFollow [] _ = []
-addFollow sel fllw = sel ++ mapMaybe f fllw
-  where f (a,b) = if a `elem` sel then Just b else Nothing
+-- The bool specifies if the lmb is pressed.
+myMotion :: Bool -> Double -> Double -> S -> IO S
+myMotion True dx dy s =
+  if null (selection s)
+  then return s { panX = panX s + dx, panY = panY s + dy }
+  else return $ mapSelection (move dx dy) s
+myMotion _ _ _ s = return s
 
 myDraw :: S -> Render ()
 myDraw s = do
@@ -301,8 +302,25 @@ data Concept =
 data Link = Link Double Double RGBA Int String Int [Int] Double
   deriving Show
 
-position :: Handle -> (Double,Double)
-position (Handle x y) = (x,y)
+positionConcept :: Concept -> (Double,Double)
+positionConcept (Text x y _ _ _ _) = (x,y)
+positionConcept (Rectangle x y _ _ _) = (x,y)
+
+setPositionConcept :: Double -> Double -> Concept -> Concept
+setPositionConcept x y (Text _ _ rgba sz n ss) = Text x y rgba sz n ss
+setPositionConcept x y (Rectangle _ _ rgba w h) = Rectangle x y rgba w h
+
+positionLink :: Link -> (Double,Double)
+positionLink (Link x y _ _ _ _ _ _) = (x,y)
+
+setPositionLink :: Double -> Double -> Link -> Link
+setPositionLink x y (Link _ _ rgba f v t ps lw) = Link x y rgba f v t ps lw
+
+positionHandle :: Handle -> (Double,Double)
+positionHandle (Handle x y) = (x,y)
+
+setPositionHandle :: Double -> Double -> Handle -> Handle
+setPositionHandle x y (Handle _ _) = Handle x y
 
 renderHandle :: Bool -> Handle -> Render ()
 renderHandle selected (Handle x y) = do
@@ -393,6 +411,8 @@ class Pickable a where
   pick :: Double -> Double -> a -> Bool
 
 class Moveable a where
+  position :: a -> (Double,Double)
+  setPosition :: Double -> Double -> a -> a
   move :: Double -> Double -> a -> a
 
 instance Renderable Concept where
@@ -411,17 +431,54 @@ instance Pickable Handle where
   pick = pickHandle
 
 instance Moveable Concept where
+  position = positionConcept
+  setPosition = setPositionConcept
   move = moveConcept
 
 instance Moveable Link where
+  position = positionLink
+  setPosition = setPositionLink
   move = moveLink
 
 instance Moveable Handle where
+  position = positionHandle
+  setPosition = setPositionHandle
   move = moveHandle
+
+----------------------------------------------------------------------
+-- Process the selection
+----------------------------------------------------------------------
 
 -- Filter the selected nodes.
 select :: Pickable a => (Int -> b) -> Double -> Double -> [a] -> [b]
 select f x y = map (f . fst) . filter (pick x y . snd) . zip [0..]
+
+mapSelection :: (forall a . Moveable a => a -> a) -> S -> S
+mapSelection f s = s
+  { concepts = map fc cs
+  , links = map fl ls
+  , handles = map fh hs
+  }
+  where
+  cs = zip [0..] (concepts s)
+  ls = zip [0..] (links s)
+  hs = zip [0..] (handles s)
+  sel = selection s
+  fol = follow s
+  fc (b,n) = if IdConcept b `elem` (sel `addFollow` fol) then f n else n
+  fl (b,n) = if IdLink b    `elem` (sel `addFollow` fol) then f n else n
+  fh (b,n) = if IdHandle b  `elem` (sel `addFollow` fol) then f n else n
+
+snapSelection :: Int -> S -> S
+snapSelection t = mapSelection sn
+  where
+  sn n = let (a,b) = position n
+         in setPosition (snap t a) (snap t b) n
+
+addFollow :: [Id] -> [(Id,Id)] -> [Id]
+addFollow [] _ = []
+addFollow sel fllw = sel ++ mapMaybe f fllw
+  where f (a,b) = if a `elem` sel then Just b else Nothing
 
 ----------------------------------------------------------------------
 -- Convenience functions
@@ -444,6 +501,13 @@ showRGBA (r,g,b,a) = unwords ["(",show r,",",show g,",",show b,",",show a,")"]
 containXYWH :: Double -> Double -> Double -> Double -> Double -> Double -> Bool
 containXYWH a b x y w h =
   a >= x && b >= y && a <= x + w && b <= y + h
+
+-- Set n to its nearest multiple of t.
+snap :: Int -> Double -> Double
+snap t n = fromIntegral $
+  let n' = floor n
+      m =  n' `mod` t
+  in if m > 5 then n' + t - m else n' - m
 
 -- Givent a string, break it into a list of strings
 -- - at each '\n'
