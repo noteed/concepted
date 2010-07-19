@@ -18,11 +18,19 @@ import Text.PrettyPrint hiding (char, render)
 import Text.ParserCombinators.Parsec
 
 -- TODO: after a parse error when reloading the file with 'r',
--- (and reloading again) the program is stuck.
+-- (and reloading again) the program is stuck. (because of lazy io?)
 -- TODO: in xmonad, the meta-shift-c (close) doesn't work since
 -- I have added the onKeyPress callback.
--- TODO: it would be nice to automitacally reload a file when it
+-- TODO: it would be nice to automatically reload a file when it
 -- is externally modified.
+-- TODO: the addFollow is recomputed at each myMotion (it could be
+-- computed only when a selection occurs). Also chop is used at each
+-- renderConcept.
+-- TODO: use applicative for the parsers.
+-- TODO: push the background and other style-related bits in the state.
+-- TODO: when multiple items get selected (because there are stacked
+-- at same place), the selection should cycle between them (one) and
+-- all.
 
 ----------------------------------------------------------------------
 -- The main program
@@ -40,8 +48,7 @@ main = do
       case unserialize c of
         Left err -> putStrLn $ "Parse error: " ++ show err
         Right a -> main' $ a { filename = Just fn }
-    _ -> main' myState
-    _ -> putStrLn "usage: TODO"
+    _ -> putStrLn "usage: concepted filename"
 
 main' :: S -> IO ()
 main' initialState = do
@@ -88,7 +95,7 @@ main' initialState = do
     x <- readIORef xRef
     y <- readIORef yRef
     -- The first time onMotionNotify is called, the computed dx
-    -- and y are wrong.
+    -- and dy are wrong.
     let dx = eventX e - x
         dy = eventY e - y
     writeIORef xRef (eventX e)
@@ -143,6 +150,7 @@ cleanState = S
   , follow = []
   }
 
+-- an S for testing purpose
 myState :: S
 myState = S
   { width = 320.0
