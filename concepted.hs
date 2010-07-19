@@ -79,9 +79,9 @@ main' initialState = do
     return True
 
   onButtonPress canvas $ \e -> do
-    s <- takeMVar sVar
     case eventButton e of
       LeftButton -> do
+        s <- takeMVar sVar
         s' <- myLmbPress (eventX e) (eventY e) s
         putMVar sVar s'
         widgetQueueDraw canvas
