@@ -43,7 +43,7 @@ main = do
     _ -> putStrLn "usage: TODO"
 
 main' :: S -> IO ()
-main' myState = do
+main' initialState = do
   initGUI
   window <- windowNew
   set window
@@ -56,7 +56,7 @@ main' myState = do
   containerAdd window canvas
   widgetShowAll window 
 
-  sVar <- newMVar myState
+  sVar <- newMVar initialState
   xRef <- newIORef 0
   yRef <- newIORef 0
 
@@ -119,10 +119,12 @@ data S = S
   , filename :: Maybe String
   , panX :: Double
   , panY :: Double
-  , nodes :: [Node]
-  , selection :: [Int]
+  , concepts :: [Concept]
+  , links :: [Link]
+  , handles :: [Handle]
+  , selection :: [Id]
   -- if (a,b) is in follow then whenever a is moved, b is moved too
-  , follow :: [(Int,Int)]
+  , follow :: [(Id,Id)]
   }
   deriving (Show)
 
@@ -133,32 +135,36 @@ cleanState = S
   , filename = Nothing
   , panX = 0
   , panY = 0
-  , nodes = []
+  , concepts = []
+  , links = []
+  , handles = []
   , selection = []
   , follow = []
   }
 
+myState :: S
 myState = S
   { width = 320.0
   , height = 200.0
   , filename = Nothing
   , panX = 0.0
   , panY = 0.0
-  , nodes =
-  [
-    Rectangle 0.0 0.0 (1.0,0.7,0.0,1.0) 100.0 40.0
+  , concepts =
+  [ Rectangle 0.0 0.0 (1.0,0.7,0.0,1.0) 100.0 40.0
     , Text 100.0 100.0 (0.0,0.0,0.0,1.0) 20.0 25 "Concepted"
     , Text 100.0 120.0 (0.0,0.0,0.0,1.0) 12.0 25 "Concept mapping tool"
     , Text 200.0 260.0 (0.0,0.0,0.0,1.0) 20.0 25 "Lorem ipsum dolor"
     , Text 200.0 300.0 (0.0,0.0,0.0,1.0) 12.0 25 "Lorem ipsum dolor\nsit\namet,\nconsectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat."
-    , Handle 10.0 10.0
+    ]
+  , handles =
+    [ Handle 10.0 10.0
     , Handle 120.0 50.0
     , Handle 180.0 30.0
     , Handle 300.0 400.0
-    , Link 50.0 50.0 (0.0,1.0,1.0,1.0) 1 "is way too" 3 [5,6,7,8,10] 2.0
-  ]
+    ]
+  , links = [ Link 50.0 50.0 (0.0,1.0,1.0,1.0) 1 "is way too" 3 [0,1,2,3] 2.0 ]
   , selection = []
-  , follow = [(0,1)]
+  , follow = [(IdConcept 0, IdConcept 1)]
   }
 
 ----------------------------------------------------------------------
@@ -174,29 +180,46 @@ myKeyPress k s = case k of
         Left err -> do
           putStrLn $ "parse error: " ++ show err
           return Nothing
-        Right s' -> return . Just $ s { nodes = nodes s', follow = follow s' }
+        Right s' -> return . Just $ s
+          { concepts = concepts s'
+          , links = links s'
+          , handles = handles s'
+          , follow = follow s'
+          }
     Nothing -> return Nothing
   _ -> return Nothing
 
 myLmbPress :: Double -> Double -> S -> IO S
 myLmbPress x y s = do
-  let sel = select (x - panX s) (y - panY s) (nodes s)
-  return $ s { selection = sel }
+  let selc = select IdConcept (x - panX s) (y - panY s) (concepts s)
+      selh = select IdHandle (x - panX s) (y - panY s) (handles s)
+      sell = select IdLink (x - panX s) (y - panY s) (links s)
+  return $ s { selection = concat [selc,selh,sell] }
 
 myMotion :: Bool -> Double -> Double -> S -> IO S
 myMotion lmb dx dy s = do
   if lmb
     then do
-      let ns = zip ([0..]) (nodes s)
+      let cs = zip ([0..]) (concepts s)
+          ls = zip ([0..]) (links s)
+          hs = zip ([0..]) (handles s)
           sel = selection s
-          f (b,n) = if b `elem` (sel `addFollow` follow s) then move dx dy n else n
-          nodes' = map f ns
-      if not (null sel)
-        then return $ s { nodes = nodes' }
-        else return s { panX = panX s + dx, panY = panY s + dy }
+          f (b,n) = if IdConcept b `elem` (sel `addFollow` follow s) then move dx dy n else n
+          g (b,n) = if IdLink b    `elem` (sel `addFollow` follow s) then move dx dy n else n
+          h (b,n) = if IdHandle b  `elem` (sel `addFollow` follow s) then move dx dy n else n
+          cs' = map f cs
+          ls' = map g ls
+          hs' = map h hs
+      if null sel
+        then return s { panX = panX s + dx, panY = panY s + dy }
+        else return $ s
+          { concepts = cs'
+          , links = ls'
+          , handles = hs'
+          }
     else return s
 
-addFollow :: [Int] -> [(Int,Int)] -> [Int]
+addFollow :: [Id] -> [(Id,Id)] -> [Id]
 addFollow [] _ = []
 addFollow sel fllw = sel ++ mapMaybe (flip lookup fllw) sel
 
@@ -207,17 +230,21 @@ myDraw s = do
 
   translate (panX s) (panY s)
 
-  mapM_ (\(a,b) -> render (nodes s) (a `elem` selection s) b)
-    (zip [0..] (nodes s))
+  mapM_ (\(a,b) -> render (IdConcept a `elem` selection s) b)
+    (zip [0..] (concepts s))
+  mapM_ (\(a,b) -> renderLink (handles s) (IdLink a `elem` selection s) b)
+    (zip [0..] (links s))
+  mapM_ (\(a,b) -> render (IdHandle a `elem` selection s) b)
+    (zip [0..] (handles s))
 
 myCommand :: MVar S -> IO () -> IO ()
 myCommand sVar redraw = do
   l <- getLine
   case l of
-    "rect" -> do
+    ":rectangle" -> do
       s <- takeMVar sVar
       putMVar sVar $ s
-        { nodes = Rectangle 100 100 (1,0,0,1) 100 100:nodes s }
+        { concepts = Rectangle 100 100 (1,0,0,1) 100 100 : concepts s }
       redraw
     _ -> putStrLn l
 
@@ -245,30 +272,39 @@ cyan = (0,1,1,1)
 orange :: RGBA
 orange = (1,0.7,0,1)
 
-data Node =
-    -- x y (the center, not the upper-left corner)
-    Handle Double Double
-    -- x y rgba width height
-  | Rectangle Double Double RGBA Double Double
-    -- x y rgba text-size max-line-length content
+data Id =
+    IdHandle Int
+  | IdConcept Int
+  | IdLink Int
+  deriving (Eq, Show)
+
+-- x y (the center, not the upper-left corner)
+data Handle = Handle Double Double
+  deriving Show
+
+data Concept =
+  -- x y rgba width height
+    Rectangle Double Double RGBA Double Double
+  -- x y rgba text-size max-line-length content
   | Text Double Double RGBA Double Int String
-    -- x y from verb to control-points (probably handles) rgba line-width
-  | Link Double Double RGBA Int String Int [Int] Double
-  deriving (Read, Show)
+  deriving Show
 
-position :: Node -> (Double,Double)
+-- x y from verb to control-points (probably handles) rgba line-width
+data Link = Link Double Double RGBA Int String Int [Int] Double
+  deriving Show
+
+position :: Handle -> (Double,Double)
 position (Handle x y) = (x,y)
-position (Rectangle x y _ _ _) = (x,y)
-position (Text x y _ _ _ _) = (x,y)
-position (Link x y _ _ _ _ _ _) = (x,y)
 
-render :: [Node] -> Bool -> Node -> Render ()
-render _ selected (Handle x y) = do
+renderHandle :: Bool -> Handle -> Render ()
+renderHandle selected (Handle x y) = do
   setLineWidth 0.6
   setSourceRGBA' lightGrey
   rectangle (x-10) (y-10) 20 20
   if selected then fill else stroke
-render _ selected (Rectangle x y rgba w h) = do
+
+renderConcept :: Bool -> Concept -> Render ()
+renderConcept selected (Rectangle x y rgba w h) = do
   setSourceRGBA' rgba
   rectangle x y w h
   fill
@@ -277,9 +313,9 @@ render _ selected (Rectangle x y rgba w h) = do
     rectangle x y w h
     stroke
 
-render _ selected (Text x y rgba sz n ss) = do
+renderConcept selected (Text x y rgba sz n ss) = do
   -- the square handle
-  render undefined selected (Handle (x-12) (y-12-sz)) -- hardcoded in pickText
+  render selected (Handle (x-12) (y-12-sz)) -- hardcoded in pickText
   -- the info line
   setFontSize 10
   moveTo (x+2) (y-sz)
@@ -293,9 +329,10 @@ render _ selected (Text x y rgba sz n ss) = do
         showText s
   mapM_ f txts
 
-render pts selected (Link x y rgba _ v _ ps lw) = do
+renderLink :: [Handle] -> Bool -> Link -> Render ()
+renderLink hs selected (Link x y rgba _ v _ ps lw) = do
   -- the square handle
-  render undefined selected (Handle x y)
+  render selected (Handle x y)
   -- the verb
   setFontSize 10
   moveTo x y
@@ -305,38 +342,78 @@ render pts selected (Link x y rgba _ v _ ps lw) = do
   setLineJoin LineJoinRound
   setLineWidth lw
   setSourceRGBA' rgba
-  mapM_ (uncurry lineTo) (map (position . (pts !!)) ps)
+  mapM_ (uncurry lineTo) (map (position . (hs !!)) ps)
   stroke
 
-pick :: Double -> Double -> Node -> Bool
-pick a b (Handle x y) =
-  containXYWH a b (x-10) (y-10) 20 20
-
-pick a b (Rectangle x y _ w h) =
+pickConcept :: Double -> Double -> Concept -> Bool
+pickConcept a b (Rectangle x y _ w h) =
   containXYWH a b x y w h
-
-pick a b (Text x y _ sz _ _) =
+pickConcept a b (Text x y _ sz _ _) =
   containXYWH a b (x-22) (y-sz-22) 20 20 -- hardcoded in render Text
 
-pick a b (Link x y _ _ _ _ _ _) =
+pickLink :: Double -> Double -> Link -> Bool
+pickLink a b (Link x y _ _ _ _ _ _) =
   containXYWH a b (x-10) (y-10) 20 20
 
-move :: Double -> Double -> Node -> Node
-move dx dy (Link x y rgba f v t ps lw) =
-  Link (x + dx) (y + dy) rgba f v t ps lw
+pickHandle :: Double -> Double -> Handle -> Bool
+pickHandle a b (Handle x y) =
+  containXYWH a b (x-10) (y-10) 20 20
 
-move dx dy (Handle x y) =
-  Handle (x + dx) (y + dy)
-
-move dx dy (Rectangle x y rgba w h) =
+moveConcept :: Double -> Double -> Concept -> Concept
+moveConcept dx dy (Rectangle x y rgba w h) =
   Rectangle (x + dx) (y + dy) rgba w h
 
-move dx dy (Text x y rgba sz n ss) =
+moveConcept dx dy (Text x y rgba sz n ss) =
   Text (x + dx) (y + dy) rgba sz n ss
 
+moveLink :: Double -> Double -> Link -> Link
+moveLink dx dy (Link x y rgba f v t ps lw) =
+  Link (x + dx) (y + dy) rgba f v t ps lw
+
+moveHandle :: Double -> Double -> Handle -> Handle
+moveHandle dx dy (Handle x y) =
+  Handle (x + dx) (y + dy)
+
+----------------------------------------------------------------------
+-- Classes
+----------------------------------------------------------------------
+
+class Renderable a where
+  render :: Bool -> a -> Render ()
+
+class Pickable a where
+  pick :: Double -> Double -> a -> Bool
+
+class Moveable a where
+  move :: Double -> Double -> a -> a
+
+instance Renderable Concept where
+  render = renderConcept
+
+instance Renderable Handle where
+  render = renderHandle
+
+instance Pickable Concept where
+  pick = pickConcept
+
+instance Pickable Link where
+  pick = pickLink
+
+instance Pickable Handle where
+  pick = pickHandle
+
+instance Moveable Concept where
+  move = moveConcept
+
+instance Moveable Link where
+  move = moveLink
+
+instance Moveable Handle where
+  move = moveHandle
+
 -- Filter the selected nodes.
-select :: Double -> Double -> [Node] -> [Int]
-select x y = map fst . filter (pick x y . snd) . zip [0..]
+select :: Pickable a => (Int -> b) -> Double -> Double -> [a] -> [b]
+select f x y = map (f . fst) . filter (pick x y . snd) . zip [0..]
 
 ----------------------------------------------------------------------
 -- Convenience functions
@@ -380,25 +457,36 @@ tshow :: Show a => a -> Doc
 tshow = text . show
 
 ppS :: S -> Doc
-ppS s = (vcat . map ppNode . nodes) s
+ppS s = (vcat . map ppConcept . concepts) s
+  $+$ (vcat . map ppLink . links) s
+  $+$ (vcat . map ppHandle . handles) s
   $+$ (vcat . map ppFollow . follow) s
 
-ppNode :: Node -> Doc
-ppNode n = case n of
-  Handle x y ->
-    text ":handle" <+> double x <+> double y
+ppConcept :: Concept -> Doc
+ppConcept n = case n of
   Rectangle x y rgba w h ->
     text ":rectangle" <+> double x <+> double y <+> tshow rgba
     <+> double w <+> double h
   Text x y rgba sz w c ->
     text ":text" <+> double x <+> double y <+> tshow rgba
     <+> double sz <+> int w $+$ text c
-  Link x y rgba f v t hs lw ->
-    text ":link" <+> double x <+> double y <+> tshow rgba
-    <+> int f <+> tshow v <+> int t <+> tshow hs <+> double lw
 
-ppFollow :: (Int,Int) -> Doc
-ppFollow (a,b) = text ":follow" <+> int a <+> int b
+ppHandle :: Handle -> Doc
+ppHandle (Handle x y) =
+  text ":handle" <+> double x <+> double y
+
+ppLink :: Link -> Doc
+ppLink (Link x y rgba f v t hs lw) =
+  text ":link" <+> double x <+> double y <+> tshow rgba
+  <+> int f <+> tshow v <+> int t <+> tshow hs <+> double lw
+
+ppFollow :: (Id,Id) -> Doc
+ppFollow (a,b) = text ":follow" <+> ppId a <+> ppId b
+
+ppId :: Id -> Doc
+ppId (IdConcept i) = text "(concept " <+> int i <+> text ")"
+ppId (IdLink i) = text "(link " <+> int i <+> text ")"
+ppId (IdHandle i) = text "(handle " <+> int i <+> text ")"
 
 serialize :: S -> String
 serialize = renderStyle (style { lineLength = 80 }) . ppS
@@ -439,6 +527,13 @@ pRGBA = do
   hspaces
   return (r,g,b,a)
 
+pId :: P Id
+pId = choice . map try $
+  [ string "(concept" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> return (IdConcept i)
+  , string "(link" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> return (IdLink i)
+  , string "(handle" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> return (IdHandle i)
+  ]
+
 pString :: P String
 pString = do
   char '"'
@@ -463,13 +558,13 @@ pContentLine = do
 pContent :: P String
 pContent = (concat . intersperse "\n") `fmap` many1 pContentLine
 
-pHandle :: P Node
+pHandle :: P Handle
 pHandle = do
   x <- pDouble
   y <- pDouble
   return $ Handle x y
 
-pRectangle :: P Node
+pRectangle :: P Concept
 pRectangle = do
   x <- pDouble
   y <- pDouble
@@ -478,7 +573,7 @@ pRectangle = do
   h <- pDouble
   return $ Rectangle x y rgba w h
 
-pText :: P Node
+pText :: P Concept
 pText = do
   x <- pDouble
   y <- pDouble
@@ -489,7 +584,7 @@ pText = do
   c <- pContent
   return $ Text x y rgba sz n c
 
-pLink :: P Node
+pLink :: P Link
 pLink = do
   x <- pDouble
   y <- pDouble
@@ -501,30 +596,41 @@ pLink = do
   lw <- pDouble
   return $ Link x y rgba f v t hs lw
 
-pNode :: P Node
-pNode = choice
-  [ try (string ":handle") >> hspaces >> pHandle
-  , try (string ":rectangle") >> hspaces >> pRectangle
+pConcept :: P Concept
+pConcept = choice
+  [ try (string ":rectangle") >> hspaces >> pRectangle
   , try (string ":text") >> hspaces >> pText
-  , try (string ":link") >> hspaces >> pLink
   ]
 
-pNodes :: P [Node]
-pNodes = many1 (pNode >>= \n -> spaces >> return n)
+pConcepts :: P [Concept]
+pConcepts = many1 (pConcept >>= \n -> spaces >> return n)
 
-pFollow :: P (Int,Int)
+pLinks :: P [Link]
+pLinks = many pLink
+
+pHandles :: P [Handle]
+pHandles = many pHandle
+
+pFollow :: P (Id,Id)
 pFollow = do
   string ":follow" >> hspaces
-  a <- pInt
-  b <- pInt
+  a <- pId
+  b <- pId
   spaces
   return (a,b)
 
 pState :: P S
 pState = do
-  ns <- pNodes
+  cs <- pConcepts
+  ls <- pLinks
+  hs <- pHandles
   fs <- many pFollow
-  return $ cleanState { nodes = ns, follow = fs }
+  return $ cleanState
+    { concepts = cs
+    , links = ls
+    , handles = hs
+    , follow = fs
+    }
 
 unserialize :: String -> Either ParseError S
 unserialize = parse pState "unserialize"
