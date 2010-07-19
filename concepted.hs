@@ -1,6 +1,7 @@
 module Main where
 
 import System.Environment (getArgs)
+import System.Directory (renameFile)
 
 import Graphics.UI.Gtk hiding (
   eventKeyName, eventButton, eventModifier, Rectangle)
@@ -181,19 +182,28 @@ myState = S
 myKeyPress :: String -> S -> IO (Maybe S)
 myKeyPress k s = case k of
   "r" -> case filename s of
+    Nothing -> return Nothing
     Just fn -> do
       c <- readFile fn
       case unserialize c of
         Left err -> do
           putStrLn $ "parse error: " ++ show err
           return Nothing
-        Right s' -> return . Just $ s
-          { concepts = concepts s'
-          , links = links s'
-          , handles = handles s'
-          , follow = follow s'
-          }
+        Right s' -> do
+          putStrLn $ fn ++ " reloaded"
+          return . Just $ s
+            { concepts = concepts s'
+            , links = links s'
+            , handles = handles s'
+            , follow = follow s'
+            }
+  "s" -> case filename s of
     Nothing -> return Nothing
+    Just fn -> do
+    renameFile fn (fn ++ ".bak")
+    writeFile fn (serialize s)
+    putStrLn $ fn ++ " saved"
+    return Nothing
   _ -> return Nothing
 
 myLmbPress :: Double -> Double -> S -> IO S

@@ -20,7 +20,7 @@ Source-repository head
 executable concepted
   main-is:            concepted.hs
 
-  build-depends:      base >= 4.0, parsec, pretty, gtk, cairo
+  build-depends:      base >= 4.0, directory, parsec, pretty, gtk, cairo
 
   ghc-options:        -Wall
                       -O2
