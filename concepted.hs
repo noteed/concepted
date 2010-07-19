@@ -17,10 +17,6 @@ import Data.Maybe
 import Text.PrettyPrint hiding (char, render)
 import Text.ParserCombinators.Parsec
 
--- TODO: after a parse error when reloading the file with 'r',
--- (and reloading again) the program is stuck. (because of lazy io?)
--- TODO: in xmonad, the meta-shift-c (close) doesn't work since
--- I have added the onKeyPress callback.
 -- TODO: it would be nice to automatically reload a file when it
 -- is externally modified.
 -- TODO: the addFollow is recomputed at each myMotion (it could be
@@ -74,7 +70,9 @@ main' initialState = do
     s <- takeMVar sVar
     ms <- myKeyPress (eventKeyName e) s
     case ms of
-      Nothing -> return ()
+      Nothing -> do
+        putMVar sVar s
+        return ()
       Just s' -> do
         putMVar sVar s'
         widgetQueueDraw canvas
