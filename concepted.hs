@@ -40,6 +40,7 @@ main = do
       case unserialize c of
         Left err -> putStrLn $ "Parse error: " ++ show err
         Right a -> main' $ a { filename = Just fn }
+    _ -> main' myState
     _ -> putStrLn "usage: TODO"
 
 main' :: S -> IO ()
@@ -221,7 +222,8 @@ myMotion lmb dx dy s = do
 
 addFollow :: [Id] -> [(Id,Id)] -> [Id]
 addFollow [] _ = []
-addFollow sel fllw = sel ++ mapMaybe (flip lookup fllw) sel
+addFollow sel fllw = sel ++ mapMaybe f fllw
+  where f (a,b) = if a `elem` sel then Just b else Nothing
 
 myDraw :: S -> Render ()
 myDraw s = do
@@ -484,9 +486,9 @@ ppFollow :: (Id,Id) -> Doc
 ppFollow (a,b) = text ":follow" <+> ppId a <+> ppId b
 
 ppId :: Id -> Doc
-ppId (IdConcept i) = text "(concept " <+> int i <+> text ")"
-ppId (IdLink i) = text "(link " <+> int i <+> text ")"
-ppId (IdHandle i) = text "(handle " <+> int i <+> text ")"
+ppId (IdConcept i) = text "(concept" <+> int i <> text ")"
+ppId (IdLink i) = text "(link" <+> int i <> text ")"
+ppId (IdHandle i) = text "(handle" <+> int i <> text ")"
 
 serialize :: S -> String
 serialize = renderStyle (style { lineLength = 80 }) . ppS
@@ -529,9 +531,9 @@ pRGBA = do
 
 pId :: P Id
 pId = choice . map try $
-  [ string "(concept" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> return (IdConcept i)
-  , string "(link" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> return (IdLink i)
-  , string "(handle" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> return (IdHandle i)
+  [ string "(concept" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (IdConcept i)
+  , string "(link" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (IdLink i)
+  , string "(handle" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (IdHandle i)
   ]
 
 pString :: P String
@@ -560,8 +562,10 @@ pContent = (concat . intersperse "\n") `fmap` many1 pContentLine
 
 pHandle :: P Handle
 pHandle = do
+  try (string ":handle") >> hspaces
   x <- pDouble
   y <- pDouble
+  spaces
   return $ Handle x y
 
 pRectangle :: P Concept
@@ -586,6 +590,7 @@ pText = do
 
 pLink :: P Link
 pLink = do
+  try (string ":link") >> hspaces
   x <- pDouble
   y <- pDouble
   rgba <- pRGBA
@@ -594,6 +599,7 @@ pLink = do
   t <- pInt
   hs <- pInts
   lw <- pDouble
+  spaces
   return $ Link x y rgba f v t hs lw
 
 pConcept :: P Concept

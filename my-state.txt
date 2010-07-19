@@ -1,4 +1,7 @@
 :rectangle 0.0 0.0 (1.0,0.7,0.0,1.0) 100.0 40.0
+:rectangle 200.0 500.0 (1.0,0.0,1.0,1.0) 50.0 50.0
+:text 400.0 120.0 (0.0,0.0,0.0,1.0) 12.0 25
+Written in Haskell
 :text 100.0 100.0 (0.0,0.0,0.0,1.0) 20.0 25
 Concepted
 :text 100.0 120.0 (0.0,0.0,0.0,1.0) 12.0 25
@@ -10,11 +13,11 @@ Lorem ipsum dolor
 sit
 amet,
 consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat.
+:link 50.0 50.0 (0.0,1.0,1.0,1.0) 1 "is way too" 3 [0,1,2,3] 2.0
 :handle 10.0 10.0
 :handle 120.0 50.0
 :handle 180.0 30.0
 :handle 300.0 400.0
-:link 50.0 50.0 (0.0,1.0,1.0,1.0) 1 "is way too" 3 [5,6,7,8,10] 2.0
-:text 400.0 400.0 (0.0,0.0,0.0,1.0) 24.0 25
-Written with gtk + cairo
-:follow 0 1
+:follow (concept 0) (concept 1)
+:follow (concept 0) (concept 2)
+:follow (concept 0) (concept 3)
