@@ -28,6 +28,9 @@ import Text.ParserCombinators.Parsec
 -- TODO: when multiple items get selected (because there are stacked
 -- at same place), the selection should cycle between them (one) and
 -- all.
+-- TODO: add snap-to-grid when moving things around.
+-- TODO: display the indice of each concept, link, handle.
+-- TODO: add zoom operation.
 
 ----------------------------------------------------------------------
 -- The main program
@@ -64,8 +67,6 @@ main' initialState = do
   sVar <- newMVar initialState
   xRef <- newIORef 0
   yRef <- newIORef 0
-
-  forkIO (myCommand sVar $ widgetQueueDraw canvas)
 
   onKeyPress window $ \e -> do
     s <- takeMVar sVar
@@ -254,17 +255,6 @@ myDraw s = do
     (zip [0..] (links s))
   mapM_ (\(a,b) -> render (IdHandle a `elem` selection s) b)
     (zip [0..] (handles s))
-
-myCommand :: MVar S -> IO () -> IO ()
-myCommand sVar redraw = do
-  l <- getLine
-  case l of
-    ":rectangle" -> do
-      s <- takeMVar sVar
-      putMVar sVar $ s
-        { concepts = Rectangle 100 100 (1,0,0,1) 100 100 : concepts s }
-      redraw
-    _ -> putStrLn l
 
 ----------------------------------------------------------------------
 -- Data
