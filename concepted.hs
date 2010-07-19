@@ -30,7 +30,9 @@ import Text.ParserCombinators.Parsec hiding (setPosition)
 -- at same place), the selection should cycle between them (one) and
 -- all.
 -- TODO: display the indice of each concept, link, handle.
--- TODO: add zoom operation.
+-- TODO: zoom keeping the cursor above the same point.
+-- TODO: group the code dealing with the panned and zoomed mouse
+-- x,y,dx,dy.
 
 ----------------------------------------------------------------------
 -- The main program
@@ -137,6 +139,7 @@ data S = S
   , filename :: Maybe String
   , panX :: Double
   , panY :: Double
+  , zoom :: Double
   , snapTreshold :: Maybe Int
   , concepts :: [Concept]
   , links :: [Link]
@@ -154,6 +157,7 @@ cleanState = S
   , filename = Nothing
   , panX = 0
   , panY = 0
+  , zoom = 1
   , snapTreshold = Just 10
   , concepts = []
   , links = []
@@ -170,6 +174,7 @@ myState = S
   , filename = Nothing
   , panX = 0.0
   , panY = 0.0
+  , zoom = 1
   , snapTreshold = Just 10
   , concepts =
   [ Rectangle 0.0 0.0 (1.0,0.7,0.0,1.0) 100.0 40.0
@@ -218,13 +223,18 @@ myKeyPress k s = case k of
     writeFile fn (serialize s)
     putStrLn $ fn ++ " saved"
     return Nothing
+  "plus" -> return . Just $ s { zoom = zoom s * 1.1 }
+  "minus" -> return . Just $ s { zoom = zoom s / 1.1 }
   _ -> return Nothing
 
 myLmbPress :: Double -> Double -> S -> IO S
 myLmbPress x y s = do
-  let selc = select IdConcept (x - panX s) (y - panY s) (concepts s)
-      selh = select IdHandle (x - panX s) (y - panY s) (handles s)
-      sell = select IdLink (x - panX s) (y - panY s) (links s)
+  let selc = select IdConcept ((x - panX s) / zoom s)
+        ((y - panY s) / zoom s) (concepts s)
+      selh = select IdHandle ((x - panX s) / zoom s)
+        ((y - panY s) / zoom s) (handles s)
+      sell = select IdLink ((x - panX s) / zoom s)
+        ((y - panY s) / zoom s) (links s)
   return $ s { selection = concat [selc,selh,sell] }
 
 myLmbRelease :: Double -> Double -> S -> IO S
@@ -240,7 +250,7 @@ myMotion :: Bool -> Double -> Double -> S -> IO S
 myMotion True dx dy s =
   if null (selection s)
   then return s { panX = panX s + dx, panY = panY s + dy }
-  else return $ mapSelection (move dx dy) s
+  else return $ mapSelection (move (dx / zoom s) (dy / zoom s)) s
 myMotion _ _ _ s = return s
 
 myDraw :: S -> Render ()
@@ -249,6 +259,7 @@ myDraw s = do
   paint
 
   translate (panX s) (panY s)
+  scale (zoom s) (zoom s)
 
   mapM_ (\(a,b) -> render (IdConcept a `elem` selection s) b)
     (zip [0..] (concepts s))
