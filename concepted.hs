@@ -18,6 +18,7 @@ import Data.List
 import Data.Maybe
 import Text.PrettyPrint hiding (char, render)
 import Text.ParserCombinators.Parsec hiding (setPosition)
+import qualified Text.Pandoc as P
 
 -- TODO: it would be nice to automatically reload a file when it
 -- is externally modified.
@@ -45,6 +46,9 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
+    ["-md", fn] -> do
+      a <- loadMarkdown fn
+      main' a
     [fn] -> do
       c <- readFile fn
       case unserialize c of
@@ -189,7 +193,7 @@ myState = S
     , Handle 180.0 30.0
     , Handle 300.0 400.0
     ]
-  , links = [ Link 50.0 50.0 (0.0,1.0,1.0,1.0) 1 "is way too" 3 [0,1,2,3] 2.0 ]
+  , links = [ Link 50.0 50.0 (0.0,1.0,1.0,1.0) "Concepted" "is way too" "Lorem ipsum dolor" [0,1,2,3] 2.0 ]
   , selection = []
   , follow = [(IdConcept 0, IdConcept 1)]
   }
@@ -310,7 +314,7 @@ data Concept =
   deriving Show
 
 -- x y from verb to control-points (probably handles) rgba line-width
-data Link = Link Double Double RGBA Int String Int [Int] Double
+data Link = Link Double Double RGBA String String String [Int] Double
   deriving Show
 
 positionConcept :: Concept -> (Double,Double)
@@ -561,7 +565,7 @@ ppHandle (Handle x y) =
 ppLink :: Link -> Doc
 ppLink (Link x y rgba f v t hs lw) =
   text ":link" <+> double x <+> double y <+> tshow rgba
-  <+> int f <+> tshow v <+> int t <+> tshow hs <+> double lw
+  <+> tshow f <+> tshow v <+> tshow t <+> tshow hs <+> double lw
 
 ppFollow :: (Id,Id) -> Doc
 ppFollow (a,b) = text ":follow" <+> ppId a <+> ppId b
@@ -675,9 +679,9 @@ pLink = do
   x <- pDouble
   y <- pDouble
   rgba <- pRGBA
-  f <- pInt
+  f <- pString
   v <- pString
-  t <- pInt
+  t <- pString
   hs <- pInts
   lw <- pDouble
   spaces
@@ -722,3 +726,73 @@ pState = do
 unserialize :: String -> Either ParseError S
 unserialize = parse pState "unserialize"
 
+----------------------------------------------------------------------
+-- Pandoc support
+----------------------------------------------------------------------
+
+noMeta :: P.Meta
+noMeta = P.Meta [] [] []
+
+blocks :: P.Pandoc -> [P.Block]
+blocks (P.Pandoc _ bs) = bs
+
+readDoc :: String -> P.Pandoc
+readDoc = P.readMarkdown P.defaultParserState
+
+readDoc' :: FilePath -> IO P.Pandoc
+readDoc' fn = readDoc `fmap` readFile fn
+
+inline :: [P.Inline] -> String
+inline = concat . map f
+  where f (P.Str s) = s
+        f P.Space = " "
+        f x = error $ "extractTitle: unhandled title data structure: " ++ show x
+
+extractConcept :: P.Block -> Maybe Concept
+extractConcept (P.Header 1 is) = Just $ Text 0 0 black 20 14 $ inline is
+extractConcept (P.Para is) = Just $ Text 0 0 black 10 25 $ inline is
+extractConcept _ = Nothing
+
+extractLinks :: [P.Block] -> Either ParseError [(String,String,String)]
+extractLinks bs = readVerbs $ cs
+  where cs = concat $ mapMaybe extractLinksCode bs
+
+-- The links are stored in a code block like
+-- ~~~{.links}
+-- a -- verb -> c
+-- ~~~
+extractLinksCode :: P.Block -> Maybe String
+extractLinksCode (P.CodeBlock (_,["links"],[]) code) = Just $ code
+extractLinksCode _ = Nothing
+
+readVerbs :: String -> Either ParseError [(String,String,String)]
+readVerbs = parse (many pVerb) "readVerb"
+
+pVerb :: P (String,String,String)
+pVerb = do
+  a <- many1 pWord
+  string "--"
+  hspaces
+  b <- many1 pWord
+  string "->"
+  hspaces
+  c <- many1 pWord
+  spaces
+  return (unwords a,unwords b,unwords c)
+
+pWord :: P String
+pWord = do
+  cs <- many1 $ noneOf "- \n" <|>
+    try (string "-" >> notFollowedBy (oneOf "->") >> return '-')
+  hspaces
+  return cs
+
+horizontal :: [Concept] -> [Concept]
+horizontal cs = zipWith f [0,200..] cs
+  where f x = setPosition x (100)
+
+loadMarkdown :: FilePath -> IO S
+loadMarkdown fn = do
+  bs <- blocks `fmap` readDoc' fn 
+  let cs = horizontal . mapMaybe extractConcept $ bs
+  return $ cleanState { concepts = cs }

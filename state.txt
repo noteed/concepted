@@ -14,7 +14,7 @@ Lorem ipsum dolor
 sit
 amet,
 consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat.
-:link 410.0 200.0 (0.0,1.0,1.0,1.0) 1 "is written in" 3 [0] 2.0
-:link 610.0 200.0 (0.0,1.0,1.0,1.0) 1 "using" 3 [1] 2.0
+:link 410.0 200.0 (0.0,1.0,1.0,1.0) "Concepted" "is written in" "Haskell" [0] 2.0
+:link 610.0 200.0 (0.0,1.0,1.0,1.0) "Concepted" "using" "Gtk + Cairo" [1] 2.0
 :handle 537.0 200.0
 :handle 711.0 200.0
