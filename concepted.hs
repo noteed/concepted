@@ -48,7 +48,9 @@ main = do
   case args of
     ["-md", fn] -> do
       a <- loadMarkdown fn
-      main' a
+      case a of
+        Left err -> putStrLn $ "Parse error: " ++ show err
+        Right a' -> main' a'
     [fn] -> do
       c <- readFile fn
       case unserialize c of
@@ -145,6 +147,7 @@ data S = S
   , panY :: Double
   , zoom :: Double
   , snapTreshold :: Maybe Int
+  , hideLinks :: Bool
   , concepts :: [Concept]
   , links :: [Link]
   , handles :: [Handle]
@@ -163,6 +166,7 @@ cleanState = S
   , panY = 0
   , zoom = 1
   , snapTreshold = Just 10
+  , hideLinks = False
   , concepts = []
   , links = []
   , handles = []
@@ -180,6 +184,7 @@ myState = S
   , panY = 0.0
   , zoom = 1
   , snapTreshold = Just 10
+  , hideLinks = False
   , concepts =
   [ Rectangle 0.0 0.0 (1.0,0.7,0.0,1.0) 100.0 40.0
     , Text 100.0 100.0 (0.0,0.0,0.0,1.0) 20.0 25 "Concepted"
@@ -229,6 +234,7 @@ myKeyPress k s = case k of
     return Nothing
   "plus" -> return . Just $ s { zoom = zoom s * 1.1 }
   "minus" -> return . Just $ s { zoom = zoom s / 1.1 }
+  "l" -> return . Just $ s { hideLinks = not (hideLinks s) }
   _ -> return Nothing
 
 myLmbPress :: Double -> Double -> S -> IO S
@@ -267,8 +273,9 @@ myDraw s = do
 
   mapM_ (\(a,b) -> render (IdConcept a `elem` selection s) b)
     (zip [0..] (concepts s))
-  mapM_ (\(a,b) -> renderLink (handles s) (IdLink a `elem` selection s) b)
-    (zip [0..] (links s))
+  unless (hideLinks s) $
+    mapM_ (\(a,b) -> renderLink (handles s) (IdLink a `elem` selection s) b)
+      (zip [0..] (links s))
   mapM_ (\(a,b) -> render (IdHandle a `elem` selection s) b)
     (zip [0..] (handles s))
 
@@ -757,6 +764,12 @@ extractLinks :: [P.Block] -> Either ParseError [(String,String,String)]
 extractLinks bs = readVerbs $ cs
   where cs = concat $ mapMaybe extractLinksCode bs
 
+linkConcepts :: Link -> [Concept]
+linkConcepts (Link _ _ _ f _ t _ _) = [g f,g t]
+  where g x = if length (words x) < 5
+          then Text 0 0 black 20 14 x
+          else Text 0 0 black 10 25 x
+
 -- The links are stored in a code block like
 -- ~~~{.links}
 -- a -- verb -> c
@@ -787,12 +800,44 @@ pWord = do
   hspaces
   return cs
 
+findConcepts :: String -> [Concept] -> [Concept]
+findConcepts s = filter f
+  where f (Text _ _ _ _ _ ss) | s `isPrefixOf` ss = True
+        f _ = False
+
+findConcept :: String -> [Concept] -> Maybe Concept
+findConcept s cs = case sortBy f $ findConcepts s cs of
+  [] -> Nothing
+  (c:_) -> Just c
+  where f (Text _ _ _ _ _ s1) (Text _ _ _ _ _ s2) =
+          compare (length s1) (length s2)
+        f _ _ = error "can't happen"
+
 horizontal :: [Concept] -> [Concept]
 horizontal cs = zipWith f [0,200..] cs
   where f x = setPosition x (100)
 
-loadMarkdown :: FilePath -> IO S
+vertical :: [Concept] -> [(Int,(String,String,String))] -> [(Link,Handle)]
+vertical cs ls = zipWith f [0,50..] ls'
+  where f y (l,h') = (move 0 y l, move 0 y h')
+        ls' = map g ls
+        g (i,(a,b,c)) =
+          let (x1,y1) = h a
+              (x2,y2) = h c
+          in (Link (x1 + 150) y1 cyan a b c [i] 2, Handle x2 y2)
+        h a = case findConcept a cs of
+          Nothing -> (- 100, 50)
+          Just c -> (fst $ position c, 150)
+
+loadMarkdown :: FilePath -> IO (Either ParseError S)
 loadMarkdown fn = do
   bs <- blocks `fmap` readDoc' fn 
-  let cs = horizontal . mapMaybe extractConcept $ bs
-  return $ cleanState { concepts = cs }
+  case extractLinks bs of
+    Left err -> return $ Left err
+    Right ls_ -> do
+      let cs_ = nubBy f $ mapMaybe extractConcept bs ++ concatMap linkConcepts ls
+          f (Text _ _ _ _ _ s1) (Text _ _ _ _ _ s2) = s1 == s2
+          f _ _ = error "can't happen"
+          cs = horizontal cs_
+          (ls,hs) = unzip $ vertical cs (zip [0..] ls_)
+      return . Right $ cleanState { concepts = cs, links = ls, handles = hs }
