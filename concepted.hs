@@ -198,7 +198,7 @@ myState = S
     , Handle 180.0 30.0
     , Handle 300.0 400.0
     ]
-  , links = [ Link 50.0 50.0 (0.0,1.0,1.0,1.0) "Concepted" "is way too" "Lorem ipsum dolor" [0,1,2,3] 2.0 ]
+  , links = [ Link 50.0 50.0 (0.0,1.0,1.0,1.0) 1 "is way too" 3 [0,1,2,3] 2.0 ]
   , selection = []
   , follow = [(IdConcept 0, IdConcept 1)]
   }
@@ -321,7 +321,7 @@ data Concept =
   deriving Show
 
 -- x y from verb to control-points (probably handles) rgba line-width
-data Link = Link Double Double RGBA String String String [Int] Double
+data Link = Link Double Double RGBA Int String Int [Int] Double
   deriving Show
 
 positionConcept :: Concept -> (Double,Double)
@@ -572,7 +572,7 @@ ppHandle (Handle x y) =
 ppLink :: Link -> Doc
 ppLink (Link x y rgba f v t hs lw) =
   text ":link" <+> double x <+> double y <+> tshow rgba
-  <+> tshow f <+> tshow v <+> tshow t <+> tshow hs <+> double lw
+  <+> int f <+> tshow v <+> int t <+> tshow hs <+> double lw
 
 ppFollow :: (Id,Id) -> Doc
 ppFollow (a,b) = text ":follow" <+> ppId a <+> ppId b
@@ -686,9 +686,9 @@ pLink = do
   x <- pDouble
   y <- pDouble
   rgba <- pRGBA
-  f <- pString
+  f <- pInt
   v <- pString
-  t <- pString
+  t <- pInt
   hs <- pInts
   lw <- pDouble
   spaces
@@ -764,8 +764,8 @@ extractLinks :: [P.Block] -> Either ParseError [(String,String,String)]
 extractLinks bs = readVerbs $ cs
   where cs = concat $ mapMaybe extractLinksCode bs
 
-linkConcepts :: Link -> [Concept]
-linkConcepts (Link _ _ _ f _ t _ _) = [g f,g t]
+linkConcepts :: (String,String,String) -> [Concept]
+linkConcepts (f,_,t) = [g f,g t]
   where g x = if length (words x) < 5
           then Text 0 0 black 20 14 x
           else Text 0 0 black 10 25 x
@@ -800,16 +800,16 @@ pWord = do
   hspaces
   return cs
 
-findConcepts :: String -> [Concept] -> [Concept]
-findConcepts s = filter f
-  where f (Text _ _ _ _ _ ss) | s `isPrefixOf` ss = True
-        f _ = False
+findConcepts :: String -> [Concept] -> [(Int,Concept)]
+findConcepts s = mapMaybe f . zip [0..]
+  where f (i,c@(Text _ _ _ _ _ ss)) | s `isPrefixOf` ss = Just (i,c)
+        f _ = Nothing
 
-findConcept :: String -> [Concept] -> Maybe Concept
+findConcept :: String -> [Concept] -> Maybe (Int,Concept)
 findConcept s cs = case sortBy f $ findConcepts s cs of
   [] -> Nothing
   (c:_) -> Just c
-  where f (Text _ _ _ _ _ s1) (Text _ _ _ _ _ s2) =
+  where f (_,Text _ _ _ _ _ s1) (_,Text _ _ _ _ _ s2) =
           compare (length s1) (length s2)
         f _ _ = error "can't happen"
 
@@ -822,12 +822,12 @@ vertical cs ls = zipWith f [0,50..] ls'
   where f y (l,h') = (move 0 y l, move 0 y h')
         ls' = map g ls
         g (i,(a,b,c)) =
-          let (x1,y1) = h a
-              (x2,y2) = h c
-          in (Link (x1 + 150) y1 cyan a b c [i] 2, Handle x2 y2)
+          let (j1,x1,y1) = h a
+              (j2,x2,y2) = h c
+          in (Link (x1 + 150) y1 cyan j1 b j2 [i] 2, Handle x2 y2)
         h a = case findConcept a cs of
-          Nothing -> (- 100, 50)
-          Just c -> (fst $ position c, 150)
+          Nothing -> (-1, - 100, 50) -- TODO -1 should be Nothing
+          Just (j,c) -> (j,fst $ position c, 150)
 
 loadMarkdown :: FilePath -> IO (Either ParseError S)
 loadMarkdown fn = do
@@ -835,7 +835,7 @@ loadMarkdown fn = do
   case extractLinks bs of
     Left err -> return $ Left err
     Right ls_ -> do
-      let cs_ = nubBy f $ mapMaybe extractConcept bs ++ concatMap linkConcepts ls
+      let cs_ = nubBy f $ mapMaybe extractConcept bs ++ concatMap linkConcepts ls_
           f (Text _ _ _ _ _ s1) (Text _ _ _ _ _ s2) = s1 == s2
           f _ _ = error "can't happen"
           cs = horizontal cs_
