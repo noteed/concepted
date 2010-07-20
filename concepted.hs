@@ -840,4 +840,7 @@ loadMarkdown fn = do
           f _ _ = error "can't happen"
           cs = horizontal cs_
           (ls,hs) = unzip $ vertical cs (zip [0..] ls_)
-      return . Right $ cleanState { concepts = cs, links = ls, handles = hs }
+          fs = map g (zip [0..] ls) ++ map g' (zip [0..] ls)
+          g (i,Link _ _ _ f _ _ _ _) = (IdConcept f,IdLink i)
+          g' (i,Link _ _ _ _ _ t _ _) = (IdConcept t,IdHandle i)
+      return . Right $ cleanState { concepts = cs, links = ls, handles = hs, follow = fs }
