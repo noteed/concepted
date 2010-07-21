@@ -10,7 +10,6 @@ import Graphics.UI.Gtk.Gdk.Events (
   eventX, eventY, eventKeyName, eventButton, eventModifier)
 import Graphics.Rendering.Cairo
 
-import Data.IORef
 import Control.Concurrent
 import Control.Monad
 
@@ -31,9 +30,6 @@ import qualified Text.Pandoc as P
 -- at same place), the selection should cycle between them (one) and
 -- all.
 -- TODO: display the indice of each concept, link, handle.
--- TODO: zoom keeping the cursor above the same point.
--- TODO: group the code dealing with the panned and zoomed mouse
--- x,y,dx,dy.
 
 ----------------------------------------------------------------------
 -- The main program
@@ -73,8 +69,6 @@ main' initialState = do
   widgetShowAll window 
 
   sVar <- newMVar initialState
-  xRef <- newIORef 0
-  yRef <- newIORef 0
 
   onKeyPress window $ \e -> do
     s <- takeMVar sVar
@@ -92,7 +86,7 @@ main' initialState = do
     case eventButton e of
       LeftButton -> do
         s <- takeMVar sVar
-        s' <- myLmbPress (eventX e) (eventY e) s
+        s' <- myLmbPress (Control `elem` eventModifier e) (eventX e) (eventY e) s
         putMVar sVar s'
         widgetQueueDraw canvas
       _ -> return ()
@@ -110,16 +104,13 @@ main' initialState = do
 
   onMotionNotify canvas False $ \e -> do
     s <- takeMVar sVar
-    x <- readIORef xRef
-    y <- readIORef yRef
     -- The first time onMotionNotify is called, the computed dx
     -- and dy are wrong.
-    let dx = eventX e - x
-        dy = eventY e - y
-    writeIORef xRef (eventX e)
-    writeIORef yRef (eventY e)
+    let dx = eventX e - mouseX s
+        dy = eventY e - mouseY s
     let lmb = Button1 `elem` (eventModifier e)
-    s' <- myMotion lmb dx dy s
+        rmb = Button3 `elem` (eventModifier e)
+    s' <- myMotion lmb rmb dx dy $ s { mouseX = eventX e, mouseY = eventY e }
     putMVar sVar s'
     widgetQueueDraw canvas
     return True
@@ -143,6 +134,8 @@ data S = S
   { width :: Double
   , height :: Double
   , filename :: Maybe String
+  , mouseX :: Double
+  , mouseY :: Double
   , panX :: Double
   , panY :: Double
   , zoom :: Double
@@ -162,6 +155,8 @@ cleanState = S
   { width = 320
   , height = 200
   , filename = Nothing
+  , mouseX = 0
+  , mouseY = 0
   , panX = 0
   , panY = 0
   , zoom = 1
@@ -180,6 +175,8 @@ myState = S
   { width = 320.0
   , height = 200.0
   , filename = Nothing
+  , mouseX = 0
+  , mouseY = 0
   , panX = 0.0
   , panY = 0.0
   , zoom = 1
@@ -232,20 +229,21 @@ myKeyPress k s = case k of
     writeFile fn (serialize s)
     putStrLn $ fn ++ " saved"
     return Nothing
-  "plus" -> return . Just $ s { zoom = zoom s * 1.1 }
-  "minus" -> return . Just $ s { zoom = zoom s / 1.1 }
+  "plus" -> return . Just $ zoomAt (mouseX s) (mouseY s) 1.1 s
+  "minus" -> return . Just $ zoomAt (mouseX s) (mouseY s) (1 / 1.1) s
   "l" -> return . Just $ s { hideLinks = not (hideLinks s) }
   _ -> return Nothing
 
-myLmbPress :: Double -> Double -> S -> IO S
-myLmbPress x y s = do
-  let selc = select IdConcept ((x - panX s) / zoom s)
-        ((y - panY s) / zoom s) (concepts s)
-      selh = select IdHandle ((x - panX s) / zoom s)
-        ((y - panY s) / zoom s) (handles s)
-      sell = select IdLink ((x - panX s) / zoom s)
-        ((y - panY s) / zoom s) (links s)
-  return $ s { selection = concat [selc,selh,sell] }
+myLmbPress :: Bool -> Double -> Double -> S -> IO S
+myLmbPress ctrl x y s = do
+  let (x',y') = screenToScene s (x,y)
+      selc = select IdConcept x' y' (concepts s)
+      selh = select IdHandle x' y' (handles s)
+      sell = select IdLink x' y' (links s)
+      sel = take 1 $ concat [selc,selh,sell]
+  return $ s { selection = if ctrl
+    then nub (sel ++ selection s)
+    else if null sel then selection s else sel}
 
 myLmbRelease :: Double -> Double -> S -> IO S
 myLmbRelease _ _ s = do
@@ -255,22 +253,25 @@ myLmbRelease _ _ s = do
       Nothing -> return s
       Just t -> return $ snapSelection t s
 
--- The bool specifies if the lmb is pressed.
-myMotion :: Bool -> Double -> Double -> S -> IO S
-myMotion True dx dy s =
-  if null (selection s)
-  then return s { panX = panX s + dx, panY = panY s + dy }
-  else return $ mapSelection (move (dx / zoom s) (dy / zoom s)) s
-myMotion _ _ _ s = return s
+-- The bools specifies if the lmb and rmb are pressed.
+myMotion :: Bool -> Bool -> Double -> Double -> S -> IO S
+myMotion True False dx dy s = do
+  let (dx',dy') = screenToSceneDelta s (dx,dy)
+  return $ mapSelection (move dx' dy') s
+myMotion False True dx dy s = return $ pan dx dy s
+myMotion _ _ _ _ s = return s
 
 myDraw :: S -> Render ()
 myDraw s = do
+  -- clear
   setSourceRGBA' background
   paint
 
+  -- view the scene under the pan/zoom transform
   translate (panX s) (panY s)
   scale (zoom s) (zoom s)
 
+  -- render
   mapM_ (\(a,b) -> render (IdConcept a `elem` selection s) b)
     (zip [0..] (concepts s))
   unless (hideLinks s) $
@@ -505,6 +506,31 @@ addFollow sel fllw = sel ++ mapMaybe f fllw
 ----------------------------------------------------------------------
 -- Convenience functions
 ----------------------------------------------------------------------
+
+-- Transform from screen coordinate to scene coordinate.
+screenToScene :: S -> (Double,Double) -> (Double,Double)
+screenToScene s (x,y) = ((x - panX s) / zoom s, (y - panY s) / zoom s)
+
+-- Transform from screen coordinate delta to scene coordinate delta.
+screenToSceneDelta :: S -> (Double, Double) -> (Double, Double)
+screenToSceneDelta s (dx,dy) = (dx / zoom s, dy / zoom s)
+
+-- Add dx and dy to the pan.
+pan :: Double -> Double -> S -> S
+pan dx dy s = s { panX = panX s + dx, panY = panY s + dy }
+
+-- Multiply the zoom by a, modifying the panX and panY values
+-- so that the scene-point under the screen coordinate (x,y)
+-- remains at the same screen coordiante.
+zoomAt :: Double -> Double -> Double -> S -> S
+zoomAt x y a s =
+  let (x1,y1) = screenToScene s (x,y)
+      s' = s { zoom = zoom s * a }
+      (x2,y2) = screenToScene s' (x,y)
+  in s'
+    { panX = panX s' - (x1 - x2) * zoom s'
+    , panY = panY s' - (y1 - y2) * zoom s'
+    }
 
 setSourceRGBA' :: RGBA -> Render ()
 setSourceRGBA' (r,g,b,a) = setSourceRGBA r g b a
@@ -841,6 +867,6 @@ loadMarkdown fn = do
           cs = horizontal cs_
           (ls,hs) = unzip $ vertical cs (zip [0..] ls_)
           fs = map g (zip [0..] ls) ++ map g' (zip [0..] ls)
-          g (i,Link _ _ _ f _ _ _ _) = (IdConcept f,IdLink i)
+          g (i,Link _ _ _ f' _ _ _ _) = (IdConcept f',IdLink i)
           g' (i,Link _ _ _ _ _ t _ _) = (IdConcept t,IdHandle i)
       return . Right $ cleanState { concepts = cs, links = ls, handles = hs, follow = fs }
