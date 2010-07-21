@@ -7,7 +7,7 @@ import System.Directory (renameFile)
 import Graphics.UI.Gtk hiding (
   eventKeyName, eventButton, eventModifier, Rectangle)
 import Graphics.UI.Gtk.Gdk.Events (
-  eventX, eventY, eventKeyName, eventButton, eventModifier)
+  eventX, eventY, eventKeyName, eventButton, eventDirection, eventModifier)
 import Graphics.Rendering.Cairo
 
 import Control.Concurrent
@@ -101,6 +101,19 @@ main' initialState = do
         s <- takeMVar sVar
         s' <- myLmbRelease (eventX e) (eventY e) s
         putMVar sVar s'
+        widgetQueueDraw canvas
+      _ -> return ()
+    return True
+
+  onScroll canvas $ \e -> do
+    case eventDirection e of
+      ScrollUp -> do
+        s <- takeMVar sVar
+        putMVar sVar (myScroll True s)
+        widgetQueueDraw canvas
+      ScrollDown -> do
+        s <- takeMVar sVar
+        putMVar sVar (myScroll False s)
         widgetQueueDraw canvas
       _ -> return ()
     return True
@@ -255,6 +268,12 @@ myLmbRelease _ _ s = do
     _ -> case snapTreshold s of
       Nothing -> return s
       Just t -> return $ snapSelection t s
+
+-- The bool specifies if it is up (true) or down (false).
+myScroll :: Bool -> S -> S
+myScroll up s = if up
+  then zoomAt (mouseX s) (mouseY s) 1.1 s
+  else zoomAt (mouseX s) (mouseY s) (1 / 1.1) s
 
 -- The bools specifies if the lmb and rmb are pressed.
 myMotion :: Bool -> Bool -> Double -> Double -> S -> IO S
