@@ -30,6 +30,9 @@ import qualified Text.Pandoc as P
 -- at same place), the selection should cycle between them (one) and
 -- all.
 -- TODO: display the indice of each concept, link, handle.
+-- TODO: after saving the state to file, check the file can be reload
+-- succesfully.
+-- TODO: there is a parser bug when reading a negative int.
 
 ----------------------------------------------------------------------
 -- The main program
@@ -393,6 +396,10 @@ renderLink hs selected (Link x y rgba _ v _ ps lw) = do
   setSourceRGBA' rgba
   mapM_ (uncurry lineTo) (map (position . (hs !!)) ps)
   stroke
+  -- the arrow head
+  let (xc,yc) = position (hs !! last ps)
+  arc xc yc 3.0 0 (2*pi)
+  fill
 
 pickConcept :: Double -> Double -> Concept -> Bool
 pickConcept a b (Rectangle x y _ w h) =
