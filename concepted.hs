@@ -62,7 +62,7 @@ main' initialState = do
   initGUI
   window <- windowNew
   set window
-    [ windowTitle := "Cairo Attempt"
+    [ windowTitle := "Concepted"
     , windowDefaultWidth := 320
     , windowDefaultHeight := 200
     , containerBorderWidth := 0
@@ -248,6 +248,14 @@ myKeyPress k s = case k of
   "plus" -> return . Just $ zoomAt (mouseX s) (mouseY s) 1.1 s
   "minus" -> return . Just $ zoomAt (mouseX s) (mouseY s) (1 / 1.1) s
   "l" -> return . Just $ s { hideLinks = not (hideLinks s) }
+  "c" -> do
+    let (x,y) = screenToScene s (mouseX s, mouseY s)
+    return . Just $ newConcept x y s
+  "Up" -> return . Just $ pan 0 20 s
+  "Down" -> return . Just $ pan 0 (-20) s
+  "Left" -> return . Just $ pan 20 0 s
+  "Right" -> return . Just $ pan (-20) 0 s
+  "Escape" -> mainQuit >> return Nothing
   _ -> return Nothing
 
 myLmbPress :: Bool -> Double -> Double -> S -> IO S
@@ -528,6 +536,14 @@ addFollow :: [Id] -> [(Id,Id)] -> [Id]
 addFollow [] _ = []
 addFollow sel fllw = sel ++ mapMaybe f fllw
   where f (a,b) = if a `elem` sel then Just b else Nothing
+
+----------------------------------------------------------------------
+-- Manipulate S
+----------------------------------------------------------------------
+
+newConcept :: Double -> Double -> S -> S
+newConcept x y s = s { concepts = concepts s ++ [c] }
+  where c = Text x y black 20.0 14 ("concept #" ++ show (length $ concepts s))
 
 ----------------------------------------------------------------------
 -- Convenience functions
