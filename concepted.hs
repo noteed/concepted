@@ -5,7 +5,7 @@ import System.Environment (getArgs)
 import System.Directory (renameFile)
 
 import Graphics.UI.Gtk hiding (
-  eventKeyName, eventButton, eventModifier, Rectangle)
+  eventKeyName, eventButton, eventModifier, Menu, Rectangle, Widget)
 import Graphics.UI.Gtk.Gdk.Events (
   eventX, eventY, eventKeyName, eventButton, eventDirection, eventModifier)
 import Graphics.Rendering.Cairo
@@ -18,6 +18,9 @@ import Data.Maybe
 import Text.PrettyPrint hiding (char, render)
 import Text.ParserCombinators.Parsec hiding (setPosition)
 import qualified Text.Pandoc as P
+
+import Concepted.Graphics
+import Concepted.Widget
 
 -- TODO: it would be nice to automatically reload a file when it
 -- is externally modified.
@@ -45,6 +48,11 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
+    [] -> main' $ cleanState {widgets =
+      [ Label (10,20) "Alphaner"
+      , Button (140,20) "Play" "play"
+      , Button (240,20) "Configuration" "configure"
+      ]}
     ["-md", fn] -> do
       a <- loadMarkdown fn
       case a of
@@ -72,6 +80,7 @@ main' initialState = do
   widgetShowAll window 
 
   sVar <- newMVar initialState
+  menu <- newMenu (widgets initialState)
 
   onKeyPress window $ \e -> do
     s <- takeMVar sVar
@@ -89,7 +98,7 @@ main' initialState = do
     case eventButton e of
       LeftButton -> do
         s <- takeMVar sVar
-        s' <- myLmbPress (Control `elem` eventModifier e) (eventX e) (eventY e) s
+        s' <- myLmbPress (Control `elem` eventModifier e) (eventX e) (eventY e) s menu
         putMVar sVar s'
         widgetQueueDraw canvas
       _ -> return ()
@@ -99,7 +108,7 @@ main' initialState = do
     case eventButton e of
       LeftButton -> do
         s <- takeMVar sVar
-        s' <- myLmbRelease (eventX e) (eventY e) s
+        s' <- myLmbRelease (eventX e) (eventY e) s menu
         putMVar sVar s'
         widgetQueueDraw canvas
       _ -> return ()
@@ -135,8 +144,9 @@ main' initialState = do
     (w,h) <- widgetGetSize canvas
     drawin <- widgetGetDrawWindow canvas
     s <- readMVar sVar
-    renderWithDrawable drawin (myDraw $
-      s { width = fromIntegral w, height = fromIntegral h })
+    renderWithDrawable drawin (myDraw
+      (s { width = fromIntegral w, height = fromIntegral h })
+      menu)
     return True
  
   onDestroy window mainQuit
@@ -163,8 +173,8 @@ data S = S
   , selection :: [Id]
   -- if (a,b) is in follow then whenever a is moved, b is moved too
   , follow :: [(Id,Id)]
+  , widgets :: [Widget]
   }
-  deriving (Show)
 
 cleanState :: S
 cleanState = S
@@ -183,6 +193,7 @@ cleanState = S
   , handles = []
   , selection = []
   , follow = []
+  , widgets = []
   }
 
 -- an S for testing purpose
@@ -214,6 +225,7 @@ myState = S
   , links = [ Link 50.0 50.0 (0.0,1.0,1.0,1.0) 1 "is way too" 3 [0,1,2,3] 2.0 ]
   , selection = []
   , follow = [(IdConcept 0, IdConcept 1)]
+  , widgets = []
   }
 
 ----------------------------------------------------------------------
@@ -258,19 +270,28 @@ myKeyPress k s = case k of
   "Escape" -> mainQuit >> return Nothing
   _ -> return Nothing
 
-myLmbPress :: Bool -> Double -> Double -> S -> IO S
-myLmbPress ctrl x y s = do
+myLmbPress :: Bool -> Double -> Double -> S -> Menu -> IO S
+myLmbPress ctrl x y s menu = do
   let (x',y') = screenToScene s (x,y)
       selc = select IdConcept x' y' (concepts s)
       selh = select IdHandle x' y' (handles s)
       sell = select IdLink x' y' (links s)
       sel = take 1 $ concat [selc,selh,sell]
+
+  pressMenu (x',y') menu
+
   return $ s { selection = if ctrl
     then nub (sel ++ selection s)
     else if null sel then selection s else sel}
 
-myLmbRelease :: Double -> Double -> S -> IO S
-myLmbRelease _ _ s = do
+myLmbRelease :: Double -> Double -> S -> Menu -> IO S
+myLmbRelease x y s menu = do
+  let (x',y') = screenToScene s (x,y)
+  b <- releaseMenu (x',y') menu
+  case b of
+    Nothing -> return ()
+    Just _ -> mainQuit
+
   case selection s of
     [] -> return s
     _ -> case snapTreshold s of
@@ -291,8 +312,8 @@ myMotion True False dx dy s = do
 myMotion False True dx dy s = return $ pan dx dy s
 myMotion _ _ _ _ s = return s
 
-myDraw :: S -> Render ()
-myDraw s = do
+myDraw :: S -> Menu -> Render ()
+myDraw s menu = do
   -- clear
   setSourceRGBA' background
   paint
@@ -310,197 +331,8 @@ myDraw s = do
   mapM_ (\(a,b) -> render (IdHandle a `elem` selection s) b)
     (zip [0..] (handles s))
 
-----------------------------------------------------------------------
--- Data
-----------------------------------------------------------------------
-
-type RGBA = (Double,Double,Double,Double)
-
-black :: RGBA
-black = (0,0,0,1)
-
-white :: RGBA
-white = (1,1,1,1)
-
-grey :: RGBA
-grey = (0.6,0.6,0.6,1)
-
-lightGrey :: RGBA
-lightGrey = (0.9,0.9,0.9,1)
-
-cyan :: RGBA
-cyan = (0,1,1,1)
-
-orange :: RGBA
-orange = (1,0.7,0,1)
-
-data Id =
-    IdHandle Int
-  | IdConcept Int
-  | IdLink Int
-  deriving (Eq, Show)
-
--- x y (the center, not the upper-left corner)
-data Handle = Handle Double Double
-  deriving Show
-
-data Concept =
-  -- x y rgba width height
-    Rectangle Double Double RGBA Double Double
-  -- x y rgba text-size max-line-length content
-  | Text Double Double RGBA Double Int String
-  deriving Show
-
--- x y from verb to control-points (probably handles) rgba line-width
-data Link = Link Double Double RGBA Int String Int [Int] Double
-  deriving Show
-
-positionConcept :: Concept -> (Double,Double)
-positionConcept (Text x y _ _ _ _) = (x,y)
-positionConcept (Rectangle x y _ _ _) = (x,y)
-
-setPositionConcept :: Double -> Double -> Concept -> Concept
-setPositionConcept x y (Text _ _ rgba sz n ss) = Text x y rgba sz n ss
-setPositionConcept x y (Rectangle _ _ rgba w h) = Rectangle x y rgba w h
-
-positionLink :: Link -> (Double,Double)
-positionLink (Link x y _ _ _ _ _ _) = (x,y)
-
-setPositionLink :: Double -> Double -> Link -> Link
-setPositionLink x y (Link _ _ rgba f v t ps lw) = Link x y rgba f v t ps lw
-
-positionHandle :: Handle -> (Double,Double)
-positionHandle (Handle x y) = (x,y)
-
-setPositionHandle :: Double -> Double -> Handle -> Handle
-setPositionHandle x y (Handle _ _) = Handle x y
-
-renderHandle :: Bool -> Handle -> Render ()
-renderHandle selected (Handle x y) = do
-  setLineWidth 0.6
-  setSourceRGBA' lightGrey
-  rectangle (x-10) (y-10) 20 20
-  if selected then fill else stroke
-
-renderConcept :: Bool -> Concept -> Render ()
-renderConcept selected (Rectangle x y rgba w h) = do
-  setSourceRGBA' rgba
-  rectangle x y w h
-  fill
-  when selected $ do
-    setSourceRGBA 0 0 0 1
-    rectangle x y w h
-    stroke
-
-renderConcept selected (Text x y rgba sz n ss) = do
-  -- the square handle
-  render selected (Handle (x-12) (y-12-sz)) -- hardcoded in pickText
-  -- the info line
-  setFontSize 10
-  moveTo (x+2) (y-sz)
-  showText $ unwords [show x, show y, showRGBA rgba, show sz, show n]
-  -- the text
-  setFontSize sz
-  setSourceRGBA' rgba
-  let txts = zip [(x,y + yi) | yi <- [0,sz*1.2..]] $ chop n ss
-      f ((xi,yi),s) = do
-        moveTo xi yi
-        showText s
-  mapM_ f txts
-
-renderLink :: [Handle] -> Bool -> Link -> Render ()
-renderLink hs selected (Link x y rgba _ v _ ps lw) = do
-  -- the square handle
-  render selected (Handle x y)
-  -- the verb
-  setFontSize 10
-  moveTo x y
-  setSourceRGBA' rgba
-  showText v
-  -- the line
-  setLineJoin LineJoinRound
-  setLineWidth lw
-  setSourceRGBA' rgba
-  mapM_ (uncurry lineTo) (map (position . (hs !!)) ps)
-  stroke
-  -- the arrow head
-  let (xc,yc) = position (hs !! last ps)
-  arc xc yc 3.0 0 (2*pi)
-  fill
-
-pickConcept :: Double -> Double -> Concept -> Bool
-pickConcept a b (Rectangle x y _ w h) =
-  containXYWH a b x y w h
-pickConcept a b (Text x y _ sz _ _) =
-  containXYWH a b (x-22) (y-sz-22) 20 20 -- hardcoded in render Text
-
-pickLink :: Double -> Double -> Link -> Bool
-pickLink a b (Link x y _ _ _ _ _ _) =
-  containXYWH a b (x-10) (y-10) 20 20
-
-pickHandle :: Double -> Double -> Handle -> Bool
-pickHandle a b (Handle x y) =
-  containXYWH a b (x-10) (y-10) 20 20
-
-moveConcept :: Double -> Double -> Concept -> Concept
-moveConcept dx dy (Rectangle x y rgba w h) =
-  Rectangle (x + dx) (y + dy) rgba w h
-
-moveConcept dx dy (Text x y rgba sz n ss) =
-  Text (x + dx) (y + dy) rgba sz n ss
-
-moveLink :: Double -> Double -> Link -> Link
-moveLink dx dy (Link x y rgba f v t ps lw) =
-  Link (x + dx) (y + dy) rgba f v t ps lw
-
-moveHandle :: Double -> Double -> Handle -> Handle
-moveHandle dx dy (Handle x y) =
-  Handle (x + dx) (y + dy)
-
-----------------------------------------------------------------------
--- Classes
-----------------------------------------------------------------------
-
-class Renderable a where
-  render :: Bool -> a -> Render ()
-
-class Pickable a where
-  pick :: Double -> Double -> a -> Bool
-
-class Moveable a where
-  position :: a -> (Double,Double)
-  setPosition :: Double -> Double -> a -> a
-  move :: Double -> Double -> a -> a
-
-instance Renderable Concept where
-  render = renderConcept
-
-instance Renderable Handle where
-  render = renderHandle
-
-instance Pickable Concept where
-  pick = pickConcept
-
-instance Pickable Link where
-  pick = pickLink
-
-instance Pickable Handle where
-  pick = pickHandle
-
-instance Moveable Concept where
-  position = positionConcept
-  setPosition = setPositionConcept
-  move = moveConcept
-
-instance Moveable Link where
-  position = positionLink
-  setPosition = setPositionLink
-  move = moveLink
-
-instance Moveable Handle where
-  position = positionHandle
-  setPosition = setPositionHandle
-  move = moveHandle
+  let pos = screenToScene s (mouseX s, mouseY s)
+  renderMenu pos menu
 
 ----------------------------------------------------------------------
 -- Process the selection
@@ -574,42 +406,12 @@ zoomAt x y a s =
     , panY = panY s' - (y1 - y2) * zoom s'
     }
 
-setSourceRGBA' :: RGBA -> Render ()
-setSourceRGBA' (r,g,b,a) = setSourceRGBA r g b a
-
-showRGBA :: RGBA -> String
-showRGBA rgba
-  | rgba == black = "black"
-  | rgba == white = "white"
-  | rgba == grey = "grey"
-  | rgba == lightGrey = "lightGrey"
-  | rgba == cyan = "cyan"
-  | rgba == orange = "orange"
-showRGBA (r,g,b,a) = unwords ["(",show r,",",show g,",",show b,",",show a,")"]
-
--- Test if the rectangle (x,y,w,h) contains the point (a,b).
-containXYWH :: Double -> Double -> Double -> Double -> Double -> Double -> Bool
-containXYWH a b x y w h =
-  a >= x && b >= y && a <= x + w && b <= y + h
-
 -- Set n to its nearest multiple of t.
 snap :: Int -> Double -> Double
 snap t n = fromIntegral $
   let n' = floor n
       m =  n' `mod` t
   in if m > 5 then n' + t - m else n' - m
-
--- Givent a string, break it into a list of strings
--- - at each '\n'
--- - so that the sum of the words of each string is <= n
-chop :: Int -> String -> [String]
-chop n str = concatMap (f n [] [] . words) ls
-  where ls = lines str
-        f _ xs ys [] = ys ++ [unwords xs]
-        f n' xs ys (w:ws) = let m = max n' (length w) in
-          if sum (map length xs) + length w > m
-          then f m [] (ys ++ [unwords xs]) (w:ws)
-          else f m (xs++[w]) ys ws
 
 ----------------------------------------------------------------------
 -- Pretty-printing
