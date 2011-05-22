@@ -48,6 +48,7 @@ releaseMenu pos (Menu _ svar mvar) = do
 pickMenu :: Pos -> [(PShape,Int)] -> Maybe Int
 pickMenu pos = fmap snd . find (pickPShape pos . fst)
 
+pickPShape :: (Double, Double) -> PShape -> Bool
 pickPShape (a,b) (PRectangle x y w h) = containXYWH a b x y w h
 
 renderMenu :: Pos -> Menu -> Render ()

@@ -20,9 +20,12 @@ Source-repository head
 executable concepted
   main-is:            concepted.hs
 
-  build-depends:      base >= 4.0, directory, parsec, pretty, gtk, cairo,
-                      pandoc
+  build-depends:      base >= 4.0,
+                      cairo,
+                      directory,
+                      gtk,
+                      parsec,
+                      pretty
 
   ghc-options:        -Wall
-                      -O2
                       -fno-warn-unused-do-bind

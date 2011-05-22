@@ -17,7 +17,6 @@ import Data.List
 import Data.Maybe
 import Text.PrettyPrint hiding (char, render)
 import Text.ParserCombinators.Parsec hiding (setPosition)
-import qualified Text.Pandoc as P
 
 import Concepted.Graphics
 import Concepted.Widget
@@ -53,11 +52,6 @@ main = do
       , Button (140,20) "Play" "play"
       , Button (240,20) "Configuration" "configure"
       ]}
-    ["-md", fn] -> do
-      a <- loadMarkdown fn
-      case a of
-        Left err -> putStrLn $ "Parse error: " ++ show err
-        Right a' -> main' a'
     [fn] -> do
       c <- readFile fn
       case unserialize c of
@@ -602,115 +596,3 @@ pState = do
 
 unserialize :: String -> Either ParseError S
 unserialize = parse pState "unserialize"
-
-----------------------------------------------------------------------
--- Pandoc support
-----------------------------------------------------------------------
-
-noMeta :: P.Meta
-noMeta = P.Meta [] [] []
-
-blocks :: P.Pandoc -> [P.Block]
-blocks (P.Pandoc _ bs) = bs
-
-readDoc :: String -> P.Pandoc
-readDoc = P.readMarkdown P.defaultParserState
-
-readDoc' :: FilePath -> IO P.Pandoc
-readDoc' fn = readDoc `fmap` readFile fn
-
-inline :: [P.Inline] -> String
-inline = concat . map f
-  where f (P.Str s) = s
-        f P.Space = " "
-        f x = error $ "extractTitle: unhandled title data structure: " ++ show x
-
-extractConcept :: P.Block -> Maybe Concept
-extractConcept (P.Header 1 is) = Just $ Text 0 0 black 20 14 $ inline is
-extractConcept (P.Para is) = Just $ Text 0 0 black 10 25 $ inline is
-extractConcept _ = Nothing
-
-extractLinks :: [P.Block] -> Either ParseError [(String,String,String)]
-extractLinks bs = readVerbs $ cs
-  where cs = concat $ mapMaybe extractLinksCode bs
-
-linkConcepts :: (String,String,String) -> [Concept]
-linkConcepts (f,_,t) = [g f,g t]
-  where g x = if length (words x) < 5
-          then Text 0 0 black 20 14 x
-          else Text 0 0 black 10 25 x
-
--- The links are stored in a code block like
--- ~~~{.links}
--- a -- verb -> c
--- ~~~
-extractLinksCode :: P.Block -> Maybe String
-extractLinksCode (P.CodeBlock (_,["links"],[]) code) = Just $ code
-extractLinksCode _ = Nothing
-
-readVerbs :: String -> Either ParseError [(String,String,String)]
-readVerbs = parse (many pVerb) "readVerb"
-
-pVerb :: P (String,String,String)
-pVerb = do
-  a <- many1 pWord
-  string "--"
-  hspaces
-  b <- many1 pWord
-  string "->"
-  hspaces
-  c <- many1 pWord
-  spaces
-  return (unwords a,unwords b,unwords c)
-
-pWord :: P String
-pWord = do
-  cs <- many1 $ noneOf "- \n" <|>
-    try (string "-" >> notFollowedBy (oneOf "->") >> return '-')
-  hspaces
-  return cs
-
-findConcepts :: String -> [Concept] -> [(Int,Concept)]
-findConcepts s = mapMaybe f . zip [0..]
-  where f (i,c@(Text _ _ _ _ _ ss)) | s `isPrefixOf` ss = Just (i,c)
-        f _ = Nothing
-
-findConcept :: String -> [Concept] -> Maybe (Int,Concept)
-findConcept s cs = case sortBy f $ findConcepts s cs of
-  [] -> Nothing
-  (c:_) -> Just c
-  where f (_,Text _ _ _ _ _ s1) (_,Text _ _ _ _ _ s2) =
-          compare (length s1) (length s2)
-        f _ _ = error "can't happen"
-
-horizontal :: [Concept] -> [Concept]
-horizontal cs = zipWith f [0,200..] cs
-  where f x = setPosition x (100)
-
-vertical :: [Concept] -> [(Int,(String,String,String))] -> [(Link,Handle)]
-vertical cs ls = zipWith f [0,50..] ls'
-  where f y (l,h') = (move 0 y l, move 0 y h')
-        ls' = map g ls
-        g (i,(a,b,c)) =
-          let (j1,x1,y1) = h a
-              (j2,x2,y2) = h c
-          in (Link (x1 + 150) y1 cyan j1 b j2 [i] 2, Handle x2 y2)
-        h a = case findConcept a cs of
-          Nothing -> (-1, - 100, 50) -- TODO -1 should be Nothing
-          Just (j,c) -> (j,fst $ position c, 150)
-
-loadMarkdown :: FilePath -> IO (Either ParseError S)
-loadMarkdown fn = do
-  bs <- blocks `fmap` readDoc' fn 
-  case extractLinks bs of
-    Left err -> return $ Left err
-    Right ls_ -> do
-      let cs_ = nubBy f $ mapMaybe extractConcept bs ++ concatMap linkConcepts ls_
-          f (Text _ _ _ _ _ s1) (Text _ _ _ _ _ s2) = s1 == s2
-          f _ _ = error "can't happen"
-          cs = horizontal cs_
-          (ls,hs) = unzip $ vertical cs (zip [0..] ls_)
-          fs = map g (zip [0..] ls) ++ map g' (zip [0..] ls)
-          g (i,Link _ _ _ f' _ _ _ _) = (IdConcept f',IdLink i)
-          g' (i,Link _ _ _ _ _ t _ _) = (IdConcept t,IdHandle i)
-      return . Right $ cleanState { concepts = cs, links = ls, handles = hs, follow = fs }
