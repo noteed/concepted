@@ -1,6 +1,8 @@
 module Concepted.Syntax.Parser where
 
 import Data.List (intersperse)
+import Data.Maybe (fromJust)
+import qualified Data.IntMap as IM
 
 import Text.ParserCombinators.Parsec hiding (setPosition)
 
@@ -43,11 +45,11 @@ pRGBA = do
   hspaces
   return (r,g,b,a)
 
-pId :: P Id
+pId :: P (Either Id Int)
 pId = choice . map try $
-  [ string "(concept" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (IdConcept i)
-  , string "(link" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (IdLink i)
-  , string "(handle" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (IdHandle i)
+  [ string "(concept" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (Left $ IdConcept i)
+  , string "(link" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (Left $ IdLink i)
+  , string "(handle" >> hspaces >> pInt >>= \i -> hspaces >> string ")" >> hspaces >> return (Right i)
   ]
 
 pString :: P String
@@ -102,7 +104,7 @@ pText = do
   c <- pContent
   return $ Text x y rgba sz n c
 
-pLink :: P Link
+pLink :: P OldLink
 pLink = do
   try (string ":link") >> hspaces
   x <- pDouble
@@ -114,7 +116,7 @@ pLink = do
   hs <- pInts
   lw <- pDouble
   spaces
-  return $ Link x y rgba f v t hs lw
+  return $ OldLink x y rgba f v t hs lw
 
 pConcept :: P Concept
 pConcept = choice
@@ -125,13 +127,13 @@ pConcept = choice
 pConcepts :: P [Concept]
 pConcepts = many1 (pConcept >>= \n -> spaces >> return n)
 
-pLinks :: P [Link]
+pLinks :: P [OldLink]
 pLinks = many pLink
 
 pHandles :: P [Handle]
 pHandles = many pHandle
 
-pFollow :: P (Id,Id)
+pFollow :: P (Either Id Int, Either Id Int)
 pFollow = do
   string ":follow" >> hspaces
   a <- pId
@@ -146,11 +148,34 @@ pState = do
   hs <- pHandles
   fs <- many pFollow
   return $ cleanState
-    { concepts = cs
-    , links = ls
-    , handles = hs
-    , follow = fs
+    { concepts = IM.fromList $ zip [0..] cs
+    , links = IM.fromList $ zip [0..] $ map (mkLink hs) ls
+    , follow = map (mkFollow ls) fs
     }
+
+-- x y from rgba verb to control-points line-width
+data OldLink = OldLink Double Double RGBA Int String Int [Int] Double
+  deriving Show
+
+mkLink :: [Handle] -> OldLink -> Link
+mkLink hs (OldLink x y rgba from verb to ps w) =
+  Link x y rgba from verb to ps' w
+  where ps' = map (hs !!) ps
+
+searchHandle :: Int -> [OldLink] -> Int -> Maybe Id
+searchHandle _ [] _ = Nothing
+searchHandle i (OldLink _ _ _ _ _ _ ps _:ls) n =
+  if i `elem` ps
+    then Just $ IdLinkHandle n (length $ takeWhile (/= i) ps)
+    else searchHandle i ls (n + 1)
+
+mkFollow :: [OldLink] -> (Either Id Int, Either Id Int) -> (Id, Id)
+mkFollow ls (a,b) = (mkFollow' ls a, mkFollow' ls b)
+
+mkFollow' :: [OldLink] -> Either Id Int -> Id
+mkFollow' ls b = case b of
+  Right i -> fromJust $ searchHandle i ls 0
+  Left a -> a
 
 unserialize :: String -> Either ParseError S
 unserialize = parse pState "unserialize"

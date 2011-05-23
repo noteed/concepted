@@ -22,6 +22,7 @@ executable concepted
 
   build-depends:      base >= 4.0,
                       cairo,
+                      containers,
                       directory,
                       gtk,
                       parsec,

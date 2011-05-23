@@ -35,10 +35,11 @@ magenta = (1,0,1,1)
 orange :: RGBA
 orange = (1,0.7,0,1)
 
+-- Identify an object in a selection.
 data Id =
-    IdHandle Int
-  | IdConcept Int
+    IdConcept Int
   | IdLink Int
+  | IdLinkHandle Int Int -- The Link id, then the control-point id.
   deriving (Eq, Show)
 
 -- x y (the center, not the upper-left corner)
@@ -52,9 +53,12 @@ data Concept =
   | Text Double Double RGBA Double Int String
   deriving Show
 
--- x y from verb to control-points (probably handles) rgba line-width
-data Link = Link Double Double RGBA Int String Int [Int] Double
+-- x y rgba from verb to control-points line-width
+data Link = Link Double Double RGBA Int String Int [Handle] Double
   deriving Show
+
+handles :: Link -> [Handle]
+handles (Link _ _ _ _ _ _ hs _) = hs
 
 positionConcept :: Concept -> (Double,Double)
 positionConcept (Text x y _ _ _ _) = (x,y)
@@ -109,8 +113,8 @@ renderConcept selected (Text x y rgba sz n ss) = do
         showText s
   mapM_ f txts
 
-renderLink :: [Handle] -> Bool -> Link -> Render ()
-renderLink hs selected (Link x y rgba _ v _ ps lw) = do
+renderLink :: Bool -> Link -> Render ()
+renderLink selected (Link x y rgba _ v _ ps lw) = do
   -- the square handle
   render selected (Handle x y)
   -- the verb
@@ -122,10 +126,10 @@ renderLink hs selected (Link x y rgba _ v _ ps lw) = do
   setLineJoin LineJoinRound
   setLineWidth lw
   setSourceRGBA' rgba
-  mapM_ (uncurry lineTo) (map (position . (hs !!)) ps)
+  mapM_ (uncurry lineTo) (map position ps)
   stroke
   -- the arrow head
-  let (xc,yc) = position (hs !! last ps)
+  let (xc,yc) = position (last ps)
   arc xc yc 3.0 0 (2*pi)
   fill
 
@@ -138,6 +142,10 @@ pickConcept a b (Text x y _ sz _ _) =
 pickLink :: Double -> Double -> Link -> Bool
 pickLink a b (Link x y _ _ _ _ _ _) =
   containXYWH a b (x-10) (y-10) 20 20
+
+selectLink :: Double -> Double -> Link -> [Int]
+selectLink a b (Link _ _ _ _ _ _ ps _) =
+  select id a b $ zip [0..] ps
 
 pickHandle :: Double -> Double -> Handle -> Bool
 pickHandle a b (Handle x y) =
@@ -175,6 +183,14 @@ showRGBA (r,g,b,a) = unwords ["(",show r,",",show g,",",show b,",",show a,")"]
 containXYWH :: Double -> Double -> Double -> Double -> Double -> Double -> Bool
 containXYWH a b x y w h =
   a >= x && b >= y && a <= x + w && b <= y + h
+
+-- Filter the selected nodes.
+select :: Pickable a => (Int -> b) -> Double -> Double -> [(Int,a)] -> [b]
+select f x y = map (f . fst) . filter (pick x y . snd)
+
+selectLinksHandles :: Double -> Double -> [(Int, Link)] -> [Id]
+selectLinksHandles x y ls =
+  concatMap (\(i,l) -> map (IdLinkHandle i) $ selectLink x y l) ls
 
 ----------------------------------------------------------------------
 -- Classes

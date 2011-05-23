@@ -81,7 +81,7 @@ containWidget' width (mx,my) (Button (x,y) _ _) =
   containXYWH mx my (x-10) (y-16) (width+21) 22
 
 renderWidget :: Pos -> Widget -> Render (Maybe PShape)
-renderWidget (mx,my) w@(Label (x,y) ss) = do
+renderWidget _ (Label (x,y) ss) = do
   renderConcept False (Text x y black 18 20 ss)
   return Nothing
 

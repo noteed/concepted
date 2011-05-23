@@ -1,8 +1,8 @@
 {-# Language RankNTypes #-}
+{-# Language TupleSections #-}
 module Main where
 
 import System.Environment (getArgs)
-import System.Directory (renameFile)
 
 import Graphics.UI.Gtk hiding (
   eventKeyName, eventButton, eventModifier, Menu, Rectangle, Widget)
@@ -15,11 +15,11 @@ import Control.Monad
 
 import Data.List
 import Data.Maybe
+import qualified Data.IntMap as IM
 
 import Concepted.Graphics
 import Concepted.Widget
 import Concepted.Syntax.Parser
-import Concepted.Syntax.Pretty
 import Concepted.State
 
 -- TODO: it would be nice to automatically reload a file when it
@@ -166,16 +166,8 @@ myKeyPress k s = case k of
           return . Just $ s
             { concepts = concepts s'
             , links = links s'
-            , handles = handles s'
             , follow = follow s'
             }
-  "s" -> case filename s of
-    Nothing -> return Nothing
-    Just fn -> do
-    renameFile fn (fn ++ ".bak")
-    writeFile fn (serialize s)
-    putStrLn $ fn ++ " saved"
-    return Nothing
   "plus" -> return . Just $ zoomAt (mouseX s) (mouseY s) 1.1 s
   "minus" -> return . Just $ zoomAt (mouseX s) (mouseY s) (1 / 1.1) s
   "l" -> return . Just $ s { hideLinks = not (hideLinks s) }
@@ -192,10 +184,10 @@ myKeyPress k s = case k of
 myLmbPress :: Bool -> Double -> Double -> S -> Menu -> IO S
 myLmbPress ctrl x y s menu = do
   let (x',y') = screenToScene s (x,y)
-      selc = select IdConcept x' y' (concepts s)
-      selh = select IdHandle x' y' (handles s)
-      sell = select IdLink x' y' (links s)
-      sel = take 1 $ concat [selc,selh,sell]
+      selc = select IdConcept x' y' (IM.toList $ concepts s)
+      sell = select IdLink x' y' (IM.toList $ links s)
+      selh = selectLinksHandles x' y' (IM.toList $ links s)
+      sel = take 1 $ concat [selc, sell, selh]
 
   pressMenu (x',y') menu
 
@@ -242,13 +234,13 @@ myDraw s menu = do
   scale (zoom s) (zoom s)
 
   -- render
-  mapM_ (\(a,b) -> render (IdConcept a `elem` selection s) b)
-    (zip [0..] (concepts s))
+  mapM_ (\(a,b) -> render (a `isSelectedConcept` s) b)
+    (IM.toList $ concepts s)
   unless (hideLinks s) $
-    mapM_ (\(a,b) -> renderLink (handles s) (IdLink a `elem` selection s) b)
-      (zip [0..] (links s))
-  mapM_ (\(a,b) -> render (IdHandle a `elem` selection s) b)
-    (zip [0..] (handles s))
+    mapM_ (\(a,b) -> renderLink (a `isSelectedLink` s) b)
+      (IM.toList $ links s)
+  mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection s) j) $ zip [0..] $ handles b)
+    (IM.toList $ links s)
 
   let pos = screenToScene s (mouseX s, mouseY s)
   renderMenu pos menu
@@ -257,25 +249,22 @@ myDraw s menu = do
 -- Process the selection
 ----------------------------------------------------------------------
 
--- Filter the selected nodes.
-select :: Pickable a => (Int -> b) -> Double -> Double -> [a] -> [b]
-select f x y = map (f . fst) . filter (pick x y . snd) . zip [0..]
-
 mapSelection :: (forall a . Moveable a => a -> a) -> S -> S
 mapSelection f s = s
-  { concepts = map fc cs
-  , links = map fl ls
-  , handles = map fh hs
+  { concepts = IM.mapWithKey fc $ concepts s
+  , links = IM.mapWithKey fh' $ IM.mapWithKey fl $ links s
   }
   where
-  cs = zip [0..] (concepts s)
-  ls = zip [0..] (links s)
-  hs = zip [0..] (handles s)
-  sel = selection s
   fol = follow s
-  fc (b,n) = if IdConcept b `elem` (sel `addFollow` fol) then f n else n
-  fl (b,n) = if IdLink b    `elem` (sel `addFollow` fol) then f n else n
-  fh (b,n) = if IdHandle b  `elem` (sel `addFollow` fol) then f n else n
+  fc b n = if IdConcept b `elem` (selection s `addFollow` fol) then f n else n
+  fl b n = if IdLink b `elem` (selection s `addFollow` fol) then f n else n
+  fh' b n = mapHandles (fh b) n
+  fh b (i,n) = if IdLinkHandle b i `elem` (selection s `addFollow` fol) then f n else n
+
+mapHandles :: ((Int, Handle) -> Handle) -> Link -> Link
+mapHandles f (Link x y rgba from verb to hs w) =
+  let hs' = map f $ zip [0..] hs
+  in Link x y rgba from verb to hs' w
 
 snapSelection :: Int -> S -> S
 snapSelection t = mapSelection sn
@@ -293,8 +282,8 @@ addFollow sel fllw = sel ++ mapMaybe f fllw
 ----------------------------------------------------------------------
 
 newConcept :: Double -> Double -> S -> S
-newConcept x y s = s { concepts = concepts s ++ [c] }
-  where c = Text x y black 20.0 14 ("concept #" ++ show (length $ concepts s))
+newConcept x y s = s { concepts = IM.insert (IM.size $ concepts s) c $ concepts s }
+  where c = Text x y black 20.0 14 ("concept #" ++ show (IM.size $ concepts s))
 
 ----------------------------------------------------------------------
 -- Convenience functions
