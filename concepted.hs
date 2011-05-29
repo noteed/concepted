@@ -4,8 +4,11 @@ module Main where
 
 import System.Environment (getArgs)
 
-import Graphics.UI.Gtk hiding (
-  eventKeyName, eventButton, eventModifier, Menu, Rectangle, Widget)
+import Graphics.UI.Gtk hiding
+  ( eventKeyName, eventButton, eventModifier
+  , Menu, Point, Rectangle, Widget
+  , add
+  )
 import Graphics.UI.Gtk.Gdk.Events (
   eventX, eventY, eventKeyName, eventButton, eventDirection, eventModifier)
 import Graphics.Rendering.Cairo
@@ -93,7 +96,7 @@ main' initialState = do
     case eventButton e of
       LeftButton -> do
         s <- takeMVar sVar
-        s' <- myLmbPress (Control `elem` eventModifier e) (eventX e) (eventY e) s menu
+        s' <- myLmbPress (Control `elem` eventModifier e) (eventX e, eventY e) s menu
         putMVar sVar s'
         widgetQueueDraw canvas
       _ -> return ()
@@ -103,7 +106,7 @@ main' initialState = do
     case eventButton e of
       LeftButton -> do
         s <- takeMVar sVar
-        s' <- myLmbRelease (eventX e) (eventY e) s menu
+        s' <- myLmbRelease (eventX e, eventY e) s menu
         putMVar sVar s'
         widgetQueueDraw canvas
       _ -> return ()
@@ -124,13 +127,13 @@ main' initialState = do
 
   onMotionNotify canvas False $ \e -> do
     s <- takeMVar sVar
-    -- The first time onMotionNotify is called, the computed dx
+    -- TODO The first time onMotionNotify is called, the computed dx
     -- and dy are wrong.
-    let dx = eventX e - mouseX s
-        dy = eventY e - mouseY s
-    let lmb = Button1 `elem` (eventModifier e)
+    let dx = eventX e - fst (mouseXY s)
+        dy = eventY e - snd (mouseXY s)
+        lmb = Button1 `elem` (eventModifier e)
         rmb = Button3 `elem` (eventModifier e)
-    s' <- myMotion lmb rmb dx dy $ s { mouseX = eventX e, mouseY = eventY e }
+    s' <- myMotion lmb rmb (dx, dy) $ s { mouseXY = (eventX e, eventY e) }
     putMVar sVar s'
     widgetQueueDraw canvas
     return True
@@ -138,10 +141,10 @@ main' initialState = do
   onExpose canvas $ \_ -> do
     (w,h) <- widgetGetSize canvas
     drawin <- widgetGetDrawWindow canvas
-    s <- readMVar sVar
-    renderWithDrawable drawin (myDraw
-      (s { width = fromIntegral w, height = fromIntegral h })
-      menu)
+    s <- takeMVar sVar
+    let s' = s { width = fromIntegral w, height = fromIntegral h }
+    putMVar sVar s'
+    renderWithDrawable drawin (myDraw s' menu)
     return True
  
   onDestroy window mainQuit
@@ -168,37 +171,37 @@ myKeyPress k s = case k of
             , links = links s'
             , follow = follow s'
             }
-  "plus" -> return . Just $ zoomAt (mouseX s) (mouseY s) 1.1 s
-  "minus" -> return . Just $ zoomAt (mouseX s) (mouseY s) (1 / 1.1) s
+  "plus" -> return . Just $ zoomAt (mouseXY s) 1.1 s
+  "minus" -> return . Just $ zoomAt (mouseXY s) (1 / 1.1) s
   "l" -> return . Just $ s { hideLinks = not (hideLinks s) }
   "c" -> do
-    let (x,y) = screenToScene s (mouseX s, mouseY s)
-    return . Just $ newConcept x y s
-  "Up" -> return . Just $ pan 0 20 s
-  "Down" -> return . Just $ pan 0 (-20) s
-  "Left" -> return . Just $ pan 20 0 s
-  "Right" -> return . Just $ pan (-20) 0 s
+    let xy = screenToScene s (mouseXY s)
+    return . Just $ newConcept xy s
+  "Up" -> return . Just $ pan (0, 20) s
+  "Down" -> return . Just $ pan (0, -20) s
+  "Left" -> return . Just $ pan (20, 0) s
+  "Right" -> return . Just $ pan (-20, 0) s
   "Escape" -> mainQuit >> return Nothing
   _ -> return Nothing
 
-myLmbPress :: Bool -> Double -> Double -> S -> Menu -> IO S
-myLmbPress ctrl x y s menu = do
-  let (x',y') = screenToScene s (x,y)
-      selc = select IdConcept x' y' (IM.toList $ concepts s)
-      sell = select IdLink x' y' (IM.toList $ links s)
-      selh = selectLinksHandles x' y' (IM.toList $ links s)
+myLmbPress :: Bool -> Point -> S -> Menu -> IO S
+myLmbPress ctrl xy s menu = do
+  let xy' = screenToScene s xy
+      selc = select IdConcept xy' (IM.toList $ concepts s)
+      sell = select IdLink xy' (IM.toList $ links s)
+      selh = selectLinksHandles xy' (IM.toList $ links s)
       sel = take 1 $ concat [selc, sell, selh]
 
-  pressMenu (x',y') menu
+  pressMenu xy' menu
 
   return $ s { selection = if ctrl
     then nub (sel ++ selection s)
     else if null sel then selection s else sel}
 
-myLmbRelease :: Double -> Double -> S -> Menu -> IO S
-myLmbRelease x y s menu = do
-  let (x',y') = screenToScene s (x,y)
-  b <- releaseMenu (x',y') menu
+myLmbRelease :: Point -> S -> Menu -> IO S
+myLmbRelease xy s menu = do
+  let xy' = screenToScene s xy
+  b <- releaseMenu xy' menu
   case b of
     Nothing -> return ()
     Just _ -> mainQuit
@@ -212,16 +215,16 @@ myLmbRelease x y s menu = do
 -- The bool specifies if it is up (true) or down (false).
 myScroll :: Bool -> S -> S
 myScroll up s = if up
-  then zoomAt (mouseX s) (mouseY s) 1.1 s
-  else zoomAt (mouseX s) (mouseY s) (1 / 1.1) s
+  then zoomAt (mouseXY s) 1.1 s
+  else zoomAt (mouseXY s) (1 / 1.1) s
 
--- The bools specifies if the lmb and rmb are pressed.
-myMotion :: Bool -> Bool -> Double -> Double -> S -> IO S
-myMotion True False dx dy s = do
-  let (dx',dy') = screenToSceneDelta s (dx,dy)
-  return $ mapSelection (move dx' dy') s
-myMotion False True dx dy s = return $ pan dx dy s
-myMotion _ _ _ _ s = return s
+-- The booleans specify if the lmb and rmb are pressed.
+myMotion :: Bool -> Bool -> (Double, Double) -> S -> IO S
+myMotion True False (dx, dy) s = do
+  let dxy' = screenToSceneDelta s (dx, dy)
+  return $ mapSelection (move dxy') s
+myMotion False True dxy s = return $ pan dxy s
+myMotion _ _ _ s = return s
 
 myDraw :: S -> Menu -> Render ()
 myDraw s menu = do
@@ -230,7 +233,7 @@ myDraw s menu = do
   paint
 
   -- view the scene under the pan/zoom transform
-  translate (panX s) (panY s)
+  translate (fst $ panXY s) (snd $ panXY s)
   scale (zoom s) (zoom s)
 
   -- render
@@ -242,7 +245,7 @@ myDraw s menu = do
   mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection s) j) $ zip [0..] $ handles b)
     (IM.toList $ links s)
 
-  let pos = screenToScene s (mouseX s, mouseY s)
+  let pos = screenToScene s (mouseXY s)
   renderMenu pos menu
 
 ----------------------------------------------------------------------
@@ -262,15 +265,15 @@ mapSelection f s = s
   fh b (i,n) = if IdLinkHandle b i `elem` (selection s `addFollow` fol) then f n else n
 
 mapHandles :: ((Int, Handle) -> Handle) -> Link -> Link
-mapHandles f (Link x y rgba from verb to hs w) =
+mapHandles f (Link xy rgba from verb to hs w) =
   let hs' = map f $ zip [0..] hs
-  in Link x y rgba from verb to hs' w
+  in Link xy rgba from verb to hs' w
 
 snapSelection :: Int -> S -> S
 snapSelection t = mapSelection sn
   where
   sn n = let (a,b) = position n
-         in setPosition (snap t a) (snap t b) n
+         in setPosition (snap t a, snap t b) n
 
 addFollow :: [Id] -> [(Id,Id)] -> [Id]
 addFollow [] _ = []
@@ -281,38 +284,35 @@ addFollow sel fllw = sel ++ mapMaybe f fllw
 -- Manipulate S
 ----------------------------------------------------------------------
 
-newConcept :: Double -> Double -> S -> S
-newConcept x y s = s { concepts = IM.insert (IM.size $ concepts s) c $ concepts s }
-  where c = Text x y black 20.0 14 ("concept #" ++ show (IM.size $ concepts s))
+newConcept :: Point -> S -> S
+newConcept xy s = s { concepts = IM.insert (IM.size $ concepts s) c $ concepts s }
+  where c = Text xy black 20.0 14 ("concept #" ++ show (IM.size $ concepts s))
 
 ----------------------------------------------------------------------
 -- Convenience functions
 ----------------------------------------------------------------------
 
 -- Transform from screen coordinate to scene coordinate.
-screenToScene :: S -> (Double,Double) -> (Double,Double)
-screenToScene s (x,y) = ((x - panX s) / zoom s, (y - panY s) / zoom s)
+screenToScene :: S -> Point -> Point
+screenToScene s xy = xy `sub` panXY s `divs` zoom s
 
 -- Transform from screen coordinate delta to scene coordinate delta.
-screenToSceneDelta :: S -> (Double, Double) -> (Double, Double)
+screenToSceneDelta :: S -> Point -> Point
 screenToSceneDelta s (dx,dy) = (dx / zoom s, dy / zoom s)
 
 -- Add dx and dy to the pan.
-pan :: Double -> Double -> S -> S
-pan dx dy s = s { panX = panX s + dx, panY = panY s + dy }
+pan :: (Double, Double) -> S -> S
+pan dxy s = s { panXY = panXY s `add` dxy }
 
--- Multiply the zoom by a, modifying the panX and panY values
+-- Multiply the zoom by a, modifying the panXY values
 -- so that the scene-point under the screen coordinate (x,y)
--- remains at the same screen coordiante.
-zoomAt :: Double -> Double -> Double -> S -> S
-zoomAt x y a s =
-  let (x1,y1) = screenToScene s (x,y)
+-- remains at the same screen coordinate.
+zoomAt :: Point -> Double -> S -> S
+zoomAt xy a s =
+  let xy1 = screenToScene s xy
       s' = s { zoom = zoom s * a }
-      (x2,y2) = screenToScene s' (x,y)
-  in s'
-    { panX = panX s' - (x1 - x2) * zoom s'
-    , panY = panY s' - (y1 - y2) * zoom s'
-    }
+      xy2 = screenToScene s' xy
+  in s' { panXY = panXY s' `sub` (xy1 `sub` xy2 `muls` zoom s') }
 
 -- Set n to its nearest multiple of t.
 snap :: Int -> Double -> Double

@@ -12,12 +12,14 @@ import Concepted.Widget
 
 data S = S
   { width :: Double
+    -- ^ Gtk window width.
   , height :: Double
+    -- ^ Gtk window height.
   , filename :: Maybe String
-  , mouseX :: Double
-  , mouseY :: Double
-  , panX :: Double
-  , panY :: Double
+    -- ^ The edited file, if any.
+  , mouseXY :: (Double, Double)
+    -- ^ The mouse xy screen coordinates (i.e. w.r.t. the Gtk window)
+  , panXY :: (Double, Double)
   , zoom :: Double
   , snapTreshold :: Maybe Int
   , hideLinks :: Bool
@@ -40,10 +42,8 @@ cleanState = S
   { width = 320
   , height = 200
   , filename = Nothing
-  , mouseX = 0
-  , mouseY = 0
-  , panX = 0
-  , panY = 0
+  , mouseXY = (0, 0)
+  , panXY = (0, 0)
   , zoom = 1
   , snapTreshold = Just 10
   , hideLinks = False

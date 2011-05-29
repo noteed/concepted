@@ -82,7 +82,7 @@ pHandle = do
   x <- pDouble
   y <- pDouble
   spaces
-  return $ Handle x y
+  return $ Handle (x, y)
 
 pRectangle :: P Concept
 pRectangle = do
@@ -91,7 +91,7 @@ pRectangle = do
   rgba <- pRGBA
   w <- pDouble
   h <- pDouble
-  return $ Rectangle x y rgba w h
+  return $ Rectangle (x, y) rgba w h
 
 pText :: P Concept
 pText = do
@@ -102,7 +102,7 @@ pText = do
   n <- pInt
   hspaces
   c <- pContent
-  return $ Text x y rgba sz n c
+  return $ Text (x, y) rgba sz n c
 
 pLink :: P OldLink
 pLink = do
@@ -159,7 +159,7 @@ data OldLink = OldLink Double Double RGBA Int String Int [Int] Double
 
 mkLink :: [Handle] -> OldLink -> Link
 mkLink hs (OldLink x y rgba from verb to ps w) =
-  Link x y rgba from verb to ps' w
+  Link (x, y) rgba from verb to ps' w
   where ps' = map (hs !!) ps
 
 searchHandle :: Int -> [OldLink] -> Int -> Maybe Id

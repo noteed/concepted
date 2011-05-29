@@ -5,6 +5,12 @@ import Control.Monad
 
 import Concepted.Misc
 
+-- Cairo function for Points.
+
+rectangleXY = uncurry rectangle
+
+moveToXY = uncurry moveTo
+
 ----------------------------------------------------------------------
 -- Data
 ----------------------------------------------------------------------
@@ -35,6 +41,20 @@ magenta = (1,0,1,1)
 orange :: RGBA
 orange = (1,0.7,0,1)
 
+type Point = (Double, Double)
+
+add :: Point -> (Double, Double) -> Point
+add (a, b) (x, y) = (a + x, b + y)
+
+sub :: Point -> (Double, Double) -> Point
+sub (a, b) (x, y) = (a - x, b - y)
+
+muls :: (Double, Double) -> Double -> Point
+muls (a, b) s = (a * s, b * s)
+
+divs :: (Double, Double) -> Double -> Point
+divs (a, b) s = (a / s, b / s)
+
 -- Identify an object in a selection.
 data Id =
     IdConcept Int
@@ -43,52 +63,52 @@ data Id =
   deriving (Eq, Show)
 
 -- x y (the center, not the upper-left corner)
-data Handle = Handle Double Double
+newtype Handle = Handle Point
   deriving Show
 
 data Concept =
   -- x y rgba width height
-    Rectangle Double Double RGBA Double Double
+    Rectangle Point RGBA Double Double
   -- x y rgba text-size max-line-length content
-  | Text Double Double RGBA Double Int String
+  | Text Point RGBA Double Int String
   deriving Show
 
 -- x y rgba from verb to control-points line-width
-data Link = Link Double Double RGBA Int String Int [Handle] Double
+data Link = Link Point RGBA Int String Int [Handle] Double
   deriving Show
 
 handles :: Link -> [Handle]
-handles (Link _ _ _ _ _ _ hs _) = hs
+handles (Link _ _ _ _ _ hs _) = hs
 
-positionConcept :: Concept -> (Double,Double)
-positionConcept (Text x y _ _ _ _) = (x,y)
-positionConcept (Rectangle x y _ _ _) = (x,y)
+positionConcept :: Concept -> Point
+positionConcept (Text xy _ _ _ _) = xy
+positionConcept (Rectangle xy _ _ _) = xy
 
-setPositionConcept :: Double -> Double -> Concept -> Concept
-setPositionConcept x y (Text _ _ rgba sz n ss) = Text x y rgba sz n ss
-setPositionConcept x y (Rectangle _ _ rgba w h) = Rectangle x y rgba w h
+setPositionConcept :: Point -> Concept -> Concept
+setPositionConcept xy (Text _ rgba sz n ss) = Text xy rgba sz n ss
+setPositionConcept xy (Rectangle _ rgba w h) = Rectangle xy rgba w h
 
-positionLink :: Link -> (Double,Double)
-positionLink (Link x y _ _ _ _ _ _) = (x,y)
+positionLink :: Link -> Point
+positionLink (Link xy _ _ _ _ _ _) = xy
 
-setPositionLink :: Double -> Double -> Link -> Link
-setPositionLink x y (Link _ _ rgba f v t ps lw) = Link x y rgba f v t ps lw
+setPositionLink :: Point -> Link -> Link
+setPositionLink xy (Link _ rgba f v t ps lw) = Link xy rgba f v t ps lw
 
-positionHandle :: Handle -> (Double,Double)
-positionHandle (Handle x y) = (x,y)
+positionHandle :: Handle -> Point
+positionHandle (Handle xy) = xy
 
-setPositionHandle :: Double -> Double -> Handle -> Handle
-setPositionHandle x y (Handle _ _) = Handle x y
+setPositionHandle :: Point -> Handle -> Handle
+setPositionHandle xy (Handle _) = Handle xy
 
 renderHandle :: Bool -> Handle -> Render ()
-renderHandle selected (Handle x y) = do
+renderHandle selected (Handle xy) = do
   setLineWidth 0.6
   setSourceRGBA' lightGrey
-  rectangle (x-10) (y-10) 20 20
+  rectangleXY (xy `sub` (10, 10)) 20 20
   if selected then fill else stroke
 
 renderConcept :: Bool -> Concept -> Render ()
-renderConcept selected (Rectangle x y rgba w h) = do
+renderConcept selected (Rectangle (x, y) rgba w h) = do
   setSourceRGBA' rgba
   rectangle x y w h
   fill
@@ -97,9 +117,9 @@ renderConcept selected (Rectangle x y rgba w h) = do
     rectangle x y w h
     stroke
 
-renderConcept selected (Text x y rgba sz n ss) = do
+renderConcept selected (Text (x, y) rgba sz n ss) = do
   -- the square handle
-  render selected (Handle (x-12) (y-12-sz)) -- hardcoded in pickText
+  render selected (Handle (x-12, y-12-sz)) -- hardcoded in pickText
   -- the info line
   setFontSize 10
   moveTo (x+2) (y-sz)
@@ -114,12 +134,12 @@ renderConcept selected (Text x y rgba sz n ss) = do
   mapM_ f txts
 
 renderLink :: Bool -> Link -> Render ()
-renderLink selected (Link x y rgba _ v _ ps lw) = do
+renderLink selected (Link xy rgba _ v _ ps lw) = do
   -- the square handle
-  render selected (Handle x y)
+  render selected (Handle xy)
   -- the verb
   setFontSize 10
-  moveTo x y
+  moveToXY xy
   setSourceRGBA' rgba
   showText v
   -- the line
@@ -133,38 +153,37 @@ renderLink selected (Link x y rgba _ v _ ps lw) = do
   arc xc yc 3.0 0 (2*pi)
   fill
 
-pickConcept :: Double -> Double -> Concept -> Bool
-pickConcept a b (Rectangle x y _ w h) =
-  containXYWH a b x y w h
-pickConcept a b (Text x y _ sz _ _) =
-  containXYWH a b (x-22) (y-sz-22) 20 20 -- hardcoded in render Text
+pickConcept :: Point -> Concept -> Bool
+pickConcept ab (Rectangle xy _ w h) =
+  containXYWH ab xy w h
+pickConcept ab (Text xy _ sz _ _) =
+  containXYWH ab (xy `add` (-22, -sz-22)) 20 20 -- hardcoded in render Text
 
-pickLink :: Double -> Double -> Link -> Bool
-pickLink a b (Link x y _ _ _ _ _ _) =
-  containXYWH a b (x-10) (y-10) 20 20
+pickLink :: Point -> Link -> Bool
+pickLink ab (Link xy _ _ _ _ _ _) =
+  containXYWH ab (xy `sub` (10, 10)) 20 20
 
-selectLink :: Double -> Double -> Link -> [Int]
-selectLink a b (Link _ _ _ _ _ _ ps _) =
-  select id a b $ zip [0..] ps
+selectLink :: Point -> Link -> [Int]
+selectLink ab (Link _ _ _ _ _ ps _) =
+  select id ab $ zip [0..] ps
 
-pickHandle :: Double -> Double -> Handle -> Bool
-pickHandle a b (Handle x y) =
-  containXYWH a b (x-10) (y-10) 20 20
+pickHandle :: Point -> Handle -> Bool
+pickHandle ab (Handle xy) =
+  containXYWH ab (xy `sub` (10, 10)) 20 20
 
-moveConcept :: Double -> Double -> Concept -> Concept
-moveConcept dx dy (Rectangle x y rgba w h) =
-  Rectangle (x + dx) (y + dy) rgba w h
+moveConcept :: (Double, Double) -> Concept -> Concept
+moveConcept dxy (Rectangle xy rgba w h) =
+  Rectangle (xy `add` dxy) rgba w h
 
-moveConcept dx dy (Text x y rgba sz n ss) =
-  Text (x + dx) (y + dy) rgba sz n ss
+moveConcept dxy (Text xy rgba sz n ss) =
+  Text (xy `add` dxy) rgba sz n ss
 
-moveLink :: Double -> Double -> Link -> Link
-moveLink dx dy (Link x y rgba f v t ps lw) =
-  Link (x + dx) (y + dy) rgba f v t ps lw
+moveLink :: (Double, Double) -> Link -> Link
+moveLink dxy (Link xy rgba f v t ps lw) =
+  Link (xy `add` dxy) rgba f v t ps lw
 
-moveHandle :: Double -> Double -> Handle -> Handle
-moveHandle dx dy (Handle x y) =
-  Handle (x + dx) (y + dy)
+moveHandle :: (Double, Double) -> Handle -> Handle
+moveHandle dxy (Handle xy) = Handle $ dxy `add` xy
 
 setSourceRGBA' :: RGBA -> Render ()
 setSourceRGBA' (r,g,b,a) = setSourceRGBA r g b a
@@ -180,17 +199,17 @@ showRGBA rgba
 showRGBA (r,g,b,a) = unwords ["(",show r,",",show g,",",show b,",",show a,")"]
 
 -- Test if the rectangle (x,y,w,h) contains the point (a,b).
-containXYWH :: Double -> Double -> Double -> Double -> Double -> Double -> Bool
-containXYWH a b x y w h =
+containXYWH :: Point -> Point -> Double -> Double -> Bool
+containXYWH (a, b) (x, y) w h =
   a >= x && b >= y && a <= x + w && b <= y + h
 
 -- Filter the selected nodes.
-select :: Pickable a => (Int -> b) -> Double -> Double -> [(Int,a)] -> [b]
-select f x y = map (f . fst) . filter (pick x y . snd)
+select :: Pickable a => (Int -> b) -> Point -> [(Int,a)] -> [b]
+select f xy = map (f . fst) . filter (pick xy . snd)
 
-selectLinksHandles :: Double -> Double -> [(Int, Link)] -> [Id]
-selectLinksHandles x y ls =
-  concatMap (\(i,l) -> map (IdLinkHandle i) $ selectLink x y l) ls
+selectLinksHandles :: Point -> [(Int, Link)] -> [Id]
+selectLinksHandles xy ls =
+  concatMap (\(i,l) -> map (IdLinkHandle i) $ selectLink xy l) ls
 
 ----------------------------------------------------------------------
 -- Classes
@@ -200,12 +219,12 @@ class Renderable a where
   render :: Bool -> a -> Render ()
 
 class Pickable a where
-  pick :: Double -> Double -> a -> Bool
+  pick :: Point -> a -> Bool
 
 class Moveable a where
-  position :: a -> (Double,Double)
-  setPosition :: Double -> Double -> a -> a
-  move :: Double -> Double -> a -> a
+  position :: a -> Point
+  setPosition :: Point -> a -> a
+  move :: (Double, Double) -> a -> a
 
 instance Renderable Concept where
   render = renderConcept

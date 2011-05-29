@@ -10,8 +10,6 @@ import Graphics.Rendering.Cairo
 import Concepted.Graphics
 import Concepted.Misc
 
-type Pos = (Double,Double)
-
 type Command = String
 
 --data Mouse = Mouse | MousePressed Int
@@ -28,15 +26,15 @@ newMenu widgets = do
 -- The pickable shape of a widget.
 -- The computation of the size of a cairo text is done in the Render monad.
 -- It is done during the rendering and kept for later (pure) reuse.
-data PShape = PRectangle Double Double Double Double
+data PShape = PRectangle Point Double Double
 
-pressMenu :: Pos -> Menu -> IO ()
+pressMenu :: Point -> Menu -> IO ()
 pressMenu pos (Menu _ svar mvar) = do
   shapes <- readMVar svar
   _ <- takeMVar mvar
   putMVar mvar $ pickMenu pos shapes
 
-releaseMenu :: Pos -> Menu -> IO (Maybe Int)
+releaseMenu :: Point -> Menu -> IO (Maybe Int)
 releaseMenu pos (Menu _ svar mvar) = do
   shapes <- readMVar svar
   v <- takeMVar mvar
@@ -45,19 +43,19 @@ releaseMenu pos (Menu _ svar mvar) = do
     (Just i, Just j) | i == j -> return $ Just i
     _ -> return Nothing
 
-pickMenu :: Pos -> [(PShape,Int)] -> Maybe Int
+pickMenu :: Point -> [(PShape,Int)] -> Maybe Int
 pickMenu pos = fmap snd . find (pickPShape pos . fst)
 
-pickPShape :: (Double, Double) -> PShape -> Bool
-pickPShape (a,b) (PRectangle x y w h) = containXYWH a b x y w h
+pickPShape :: Point -> PShape -> Bool
+pickPShape ab (PRectangle xy w h) = containXYWH ab xy w h
 
-renderMenu :: Pos -> Menu -> Render ()
+renderMenu :: Point -> Menu -> Render ()
 renderMenu pos (Menu widgets svar _) = do
   _ <- liftIO $ takeMVar svar
   pshapes <- renderMenu' pos widgets
   liftIO $ putMVar svar pshapes
 
-renderMenu' :: Pos -> [Widget] -> Render [(PShape,Int)]
+renderMenu' :: Point -> [Widget] -> Render [(PShape,Int)]
 renderMenu' mouse menu = do
   ms <- zipWithM f menu [0..]
   return $ mapMaybe id ms
@@ -66,8 +64,8 @@ renderMenu' mouse menu = do
           return $ fmap (,i) s
 
 data Widget =
-    Label Pos String
-  | Button Pos String Command
+    Label Point String
+  | Button Point String Command
   deriving Show
 
 sizeWidget :: Widget -> Render Double
@@ -75,26 +73,26 @@ sizeWidget (Label _ ss) = textWidth 18 20 ss
 sizeWidget (Button _ ss _) = textWidth 18 20 ss
 
 containWidget' :: Double -> (Double, Double) -> Widget -> Bool
-containWidget' width (mx,my) (Label (x,y) _) =
-  containXYWH mx my (x-10) (y-16) (width+21) 22
-containWidget' width (mx,my) (Button (x,y) _ _) =
-  containXYWH mx my (x-10) (y-16) (width+21) 22
+containWidget' width mxy (Label xy _) =
+  containXYWH mxy (xy `sub` (10, 16)) (width+21) 22
+containWidget' width mxy (Button xy _ _) =
+  containXYWH mxy (xy `sub` (10, 16)) (width+21) 22
 
-renderWidget :: Pos -> Widget -> Render (Maybe PShape)
-renderWidget _ (Label (x,y) ss) = do
-  renderConcept False (Text x y black 18 20 ss)
+renderWidget :: Point -> Widget -> Render (Maybe PShape)
+renderWidget _ (Label xy ss) = do
+  renderConcept False (Text xy black 18 20 ss)
   return Nothing
 
-renderWidget (mx,my) w@(Button (x,y) ss _) = do
-  renderConcept False (Text x y black 18 20 ss)
+renderWidget mxy w@(Button xy ss _) = do
+  renderConcept False (Text xy black 18 20 ss)
 
   width <- sizeWidget w
-  when (containWidget' width (mx,my) w) $ do
+  when (containWidget' width mxy w) $ do
     setLineWidth 2
     setSourceRGBA' black
-    rectangle (x-10) (y-16) (width+21) 22
+    rectangleXY (xy `sub` (10, 16)) (width+21) 22
     stroke
-  return . Just $ PRectangle (x-10) (y-16) (width+21) 22
+  return . Just $ PRectangle (xy `sub` (10, 16)) (width+21) 22
 
 textWidth :: Double -> Int -> String -> Render Double
 textWidth sz n ss = do
