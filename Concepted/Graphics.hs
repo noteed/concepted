@@ -2,13 +2,17 @@ module Concepted.Graphics where
 
 import Graphics.Rendering.Cairo
 import Control.Monad
+import Data.IntMap (IntMap)
+import qualified Data.IntMap as IM
 
 import Concepted.Misc
 
 -- Cairo function for Points.
 
+rectangleXY :: Point -> Double -> Double -> Render ()
 rectangleXY = uncurry rectangle
 
+moveToXY :: Point -> Render ()
 moveToXY = uncurry moveTo
 
 ----------------------------------------------------------------------

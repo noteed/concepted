@@ -7,6 +7,7 @@ import qualified Data.IntMap as IM
 import Text.ParserCombinators.Parsec hiding (setPosition)
 
 import Concepted.Graphics
+import Concepted.Plane
 import Concepted.State
 
 ----------------------------------------------------------------------
@@ -147,11 +148,11 @@ pState = do
   ls <- pLinks
   hs <- pHandles
   fs <- many pFollow
-  return $ cleanState
+  return $ cleanState { planes = [ (head $ planes cleanState)
     { concepts = IM.fromList $ zip [0..] cs
     , links = IM.fromList $ zip [0..] $ map (mkLink hs) ls
     , follow = map (mkFollow ls) fs
-    }
+    }] }
 
 -- x y from rgba verb to control-points line-width
 data OldLink = OldLink Double Double RGBA Int String Int [Int] Double

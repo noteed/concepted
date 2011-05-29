@@ -23,6 +23,7 @@ import qualified Data.IntMap as IM
 import Concepted.Graphics
 import Concepted.Widget
 import Concepted.Syntax.Parser
+import Concepted.Plane
 import Concepted.State
 
 -- TODO: it would be nice to automatically reload a file when it
@@ -51,7 +52,7 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    [] -> main' $ cleanState {widgets =
+    [] -> main' $ replaceCurrentPlane cleanState $ (currentPlane cleanState) {widgets =
       [ Label (10,20) "Alphaner"
       , Button (140,20) "Play" "play"
       , Button (240,20) "Configuration" "configure"
@@ -78,7 +79,7 @@ main' initialState = do
   widgetShowAll window 
 
   sVar <- newMVar initialState
-  menu <- newMenu (widgets initialState)
+  menu <- newMenu (widgets $ currentPlane initialState)
 
   onKeyPress window $ \e -> do
     s <- takeMVar sVar
@@ -144,7 +145,7 @@ main' initialState = do
     s <- takeMVar sVar
     let s' = s { width = fromIntegral w, height = fromIntegral h }
     putMVar sVar s'
-    renderWithDrawable drawin (myDraw s' menu)
+    renderWithDrawable drawin (myDraw s' (currentPlane s') menu)
     return True
  
   onDestroy window mainQuit
@@ -166,93 +167,93 @@ myKeyPress k s = case k of
           return Nothing
         Right s' -> do
           putStrLn $ fn ++ " reloaded"
-          return . Just $ s
-            { concepts = concepts s'
-            , links = links s'
-            , follow = follow s'
+          return . Just . replaceCurrentPlane s $ (currentPlane s)
+            { concepts = concepts (currentPlane s')
+            , links = links (currentPlane s')
+            , follow = follow (currentPlane s')
             }
-  "plus" -> return . Just $ zoomAt (mouseXY s) 1.1 s
-  "minus" -> return . Just $ zoomAt (mouseXY s) (1 / 1.1) s
+  "plus" -> return . Just . replaceCurrentPlane s $ zoomAt (mouseXY s) 1.1 (currentPlane s)
+  "minus" -> return . Just . replaceCurrentPlane s $ zoomAt (mouseXY s) (1 / 1.1) (currentPlane s)
   "l" -> return . Just $ s { hideLinks = not (hideLinks s) }
   "c" -> do
-    let xy = screenToScene s (mouseXY s)
-    return . Just $ newConcept xy s
-  "Up" -> return . Just $ pan (0, 20) s
-  "Down" -> return . Just $ pan (0, -20) s
-  "Left" -> return . Just $ pan (20, 0) s
-  "Right" -> return . Just $ pan (-20, 0) s
+    let xy = screenToScene (currentPlane s) (mouseXY s)
+    return . Just . replaceCurrentPlane s $ newConcept xy (currentPlane s)
+  "Up" -> return . Just . replaceCurrentPlane s $ pan (0, 20) (currentPlane s)
+  "Down" -> return . Just . replaceCurrentPlane s $ pan (0, -20) (currentPlane s)
+  "Left" -> return . Just . replaceCurrentPlane s $ pan (20, 0) (currentPlane s)
+  "Right" -> return . Just . replaceCurrentPlane s $ pan (-20, 0) (currentPlane s)
   "Escape" -> mainQuit >> return Nothing
   _ -> return Nothing
 
 myLmbPress :: Bool -> Point -> S -> Menu -> IO S
 myLmbPress ctrl xy s menu = do
-  let xy' = screenToScene s xy
-      selc = select IdConcept xy' (IM.toList $ concepts s)
-      sell = select IdLink xy' (IM.toList $ links s)
-      selh = selectLinksHandles xy' (IM.toList $ links s)
+  let xy' = screenToScene (currentPlane s) xy
+      selc = select IdConcept xy' (IM.toList $ concepts $ currentPlane s)
+      sell = select IdLink xy' (IM.toList $ links $ currentPlane s)
+      selh = selectLinksHandles xy' (IM.toList $ links $ currentPlane s)
       sel = take 1 $ concat [selc, sell, selh]
 
   pressMenu xy' menu
 
-  return $ s { selection = if ctrl
-    then nub (sel ++ selection s)
-    else if null sel then selection s else sel}
+  return . replaceCurrentPlane s $ (currentPlane s) { selection = if ctrl
+    then nub (sel ++ selection (currentPlane s))
+    else if null sel then selection $ currentPlane s else sel}
 
 myLmbRelease :: Point -> S -> Menu -> IO S
 myLmbRelease xy s menu = do
-  let xy' = screenToScene s xy
+  let xy' = screenToScene (currentPlane s) xy
   b <- releaseMenu xy' menu
   case b of
     Nothing -> return ()
     Just _ -> mainQuit
 
-  case selection s of
+  case selection $ currentPlane s of
     [] -> return s
     _ -> case snapTreshold s of
       Nothing -> return s
-      Just t -> return $ snapSelection t s
+      Just t -> return . replaceCurrentPlane s $ snapSelection t $ currentPlane s
 
 -- The bool specifies if it is up (true) or down (false).
 myScroll :: Bool -> S -> S
-myScroll up s = if up
-  then zoomAt (mouseXY s) 1.1 s
-  else zoomAt (mouseXY s) (1 / 1.1) s
+myScroll up s = replaceCurrentPlane s $ if up
+  then zoomAt (mouseXY s) 1.1 $ currentPlane s
+  else zoomAt (mouseXY s) (1 / 1.1) $ currentPlane s
 
 -- The booleans specify if the lmb and rmb are pressed.
 myMotion :: Bool -> Bool -> (Double, Double) -> S -> IO S
 myMotion True False (dx, dy) s = do
-  let dxy' = screenToSceneDelta s (dx, dy)
-  return $ mapSelection (move dxy') s
-myMotion False True dxy s = return $ pan dxy s
+  let dxy' = screenToSceneDelta (currentPlane s) (dx, dy)
+  return . replaceCurrentPlane s $ mapSelection (move dxy') $ currentPlane s
+myMotion False True dxy s = return . replaceCurrentPlane s $ pan dxy $ currentPlane s
 myMotion _ _ _ s = return s
 
-myDraw :: S -> Menu -> Render ()
-myDraw s menu = do
+myDraw :: S -> Plane -> Menu -> Render ()
+myDraw s p menu = do
   -- clear
   setSourceRGBA' background
   paint
 
   -- view the scene under the pan/zoom transform
-  translate (fst $ panXY s) (snd $ panXY s)
-  scale (zoom s) (zoom s)
+  translate (fst $ panXY p) (snd $ panXY p)
+  scale (zoom p) (zoom p)
 
   -- render
-  mapM_ (\(a,b) -> render (a `isSelectedConcept` s) b)
-    (IM.toList $ concepts s)
+  mapM_ (\(a,b) -> render (a `isSelectedConcept` p) b)
+    (IM.toList $ concepts p)
   unless (hideLinks s) $
-    mapM_ (\(a,b) -> renderLink (a `isSelectedLink` s) b)
-      (IM.toList $ links s)
-  mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection s) j) $ zip [0..] $ handles b)
-    (IM.toList $ links s)
+    mapM_ (\(a,b) -> renderLink (a `isSelectedLink` p) b)
+      (IM.toList $ links p)
+  mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection p) j) $ zip [0..] $ handles b)
+    (IM.toList $ links p)
 
-  let pos = screenToScene s (mouseXY s)
+  let pos = screenToScene p (mouseXY s)
   renderMenu pos menu
 
 ----------------------------------------------------------------------
 -- Process the selection
 ----------------------------------------------------------------------
 
-mapSelection :: (forall a . Moveable a => a -> a) -> S -> S
+mapSelection :: (forall a . Moveable a => a -> a) -> Plane -> Plane
 mapSelection f s = s
   { concepts = IM.mapWithKey fc $ concepts s
   , links = IM.mapWithKey fh' $ IM.mapWithKey fl $ links s
@@ -269,7 +270,7 @@ mapHandles f (Link xy rgba from verb to hs w) =
   let hs' = map f $ zip [0..] hs
   in Link xy rgba from verb to hs' w
 
-snapSelection :: Int -> S -> S
+snapSelection :: Int -> Plane -> Plane
 snapSelection t = mapSelection sn
   where
   sn n = let (a,b) = position n
@@ -281,10 +282,10 @@ addFollow sel fllw = sel ++ mapMaybe f fllw
   where f (a,b) = if a `elem` sel then Just b else Nothing
 
 ----------------------------------------------------------------------
--- Manipulate S
+-- Manipulate a Plane
 ----------------------------------------------------------------------
 
-newConcept :: Point -> S -> S
+newConcept :: Point -> Plane -> Plane
 newConcept xy s = s { concepts = IM.insert (IM.size $ concepts s) c $ concepts s }
   where c = Text xy black 20.0 14 ("concept #" ++ show (IM.size $ concepts s))
 
@@ -293,21 +294,21 @@ newConcept xy s = s { concepts = IM.insert (IM.size $ concepts s) c $ concepts s
 ----------------------------------------------------------------------
 
 -- Transform from screen coordinate to scene coordinate.
-screenToScene :: S -> Point -> Point
+screenToScene :: Plane -> Point -> Point
 screenToScene s xy = xy `sub` panXY s `divs` zoom s
 
 -- Transform from screen coordinate delta to scene coordinate delta.
-screenToSceneDelta :: S -> Point -> Point
+screenToSceneDelta :: Plane -> Point -> Point
 screenToSceneDelta s (dx,dy) = (dx / zoom s, dy / zoom s)
 
 -- Add dx and dy to the pan.
-pan :: (Double, Double) -> S -> S
+pan :: (Double, Double) -> Plane -> Plane
 pan dxy s = s { panXY = panXY s `add` dxy }
 
 -- Multiply the zoom by a, modifying the panXY values
 -- so that the scene-point under the screen coordinate (x,y)
 -- remains at the same screen coordinate.
-zoomAt :: Point -> Double -> S -> S
+zoomAt :: Point -> Double -> Plane -> Plane
 zoomAt xy a s =
   let xy1 = screenToScene s xy
       s' = s { zoom = zoom s * a }

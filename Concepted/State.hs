@@ -1,10 +1,8 @@
 module Concepted.State where
 
-import Data.IntMap (IntMap)
 import qualified Data.IntMap as IM
 
-import Concepted.Graphics
-import Concepted.Widget
+import Concepted.Plane
 
 ----------------------------------------------------------------------
 -- The main state of the program
@@ -18,24 +16,20 @@ data S = S
   , filename :: Maybe String
     -- ^ The edited file, if any.
   , mouseXY :: (Double, Double)
-    -- ^ The mouse xy screen coordinates (i.e. w.r.t. the Gtk window)
-  , panXY :: (Double, Double)
-  , zoom :: Double
+    -- ^ The mouse xy screen coordinates (i.e. w.r.t. the Gtk window).
   , snapTreshold :: Maybe Int
+    -- ^ Specify a grid on which control points should snap.
   , hideLinks :: Bool
-  , concepts :: IntMap Concept
-  , links :: IntMap Link
-  , selection :: [Id]
-  -- if (a,b) is in follow then whenever a is moved, b is moved too
-  , follow :: [(Id,Id)]
-  , widgets :: [Widget]
+    -- ^ Specify if the links should be rendered or not.
+  , planes :: [Plane]
+    -- ^ The different planes of the application.
   }
 
-isSelectedConcept :: Int -> S -> Bool
-isSelectedConcept a s = IdConcept a `elem` selection s
+currentPlane :: S -> Plane
+currentPlane = head . planes
 
-isSelectedLink :: Int -> S -> Bool
-isSelectedLink a s = IdLink a `elem` selection s
+replaceCurrentPlane :: S -> Plane -> S
+replaceCurrentPlane s p = s { planes = p : tail (planes s) }
 
 cleanState :: S
 cleanState = S
@@ -43,14 +37,16 @@ cleanState = S
   , height = 200
   , filename = Nothing
   , mouseXY = (0, 0)
-  , panXY = (0, 0)
-  , zoom = 1
   , snapTreshold = Just 10
   , hideLinks = False
-  , concepts = IM.empty
-  , links = IM.empty
-  , selection = []
-  , follow = []
-  , widgets = []
+  , planes = [Plane
+    { panXY = (0, 0)
+    , zoom = 1
+    , concepts = IM.empty
+    , links = IM.empty
+    , selection = []
+    , follow = []
+    , widgets = []
+    } ]
   }
 
