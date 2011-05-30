@@ -66,7 +66,7 @@ renderMenu' mouse menu = do
 data Widget =
     Label Point String
   | Button Point String Command
-  deriving Show
+  deriving (Show, Eq, Ord)
 
 sizeWidget :: Widget -> Render Double
 sizeWidget (Label _ ss) = textWidth 18 20 ss

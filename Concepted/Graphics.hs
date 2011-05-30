@@ -2,8 +2,6 @@ module Concepted.Graphics where
 
 import Graphics.Rendering.Cairo
 import Control.Monad
-import Data.IntMap (IntMap)
-import qualified Data.IntMap as IM
 
 import Concepted.Misc
 

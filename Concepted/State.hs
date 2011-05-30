@@ -1,8 +1,10 @@
 module Concepted.State where
 
 import qualified Data.IntMap as IM
+import qualified Data.Map as M
 
 import Concepted.Plane
+import Concepted.Widget
 
 ----------------------------------------------------------------------
 -- The main state of the program
@@ -23,6 +25,9 @@ data S = S
     -- ^ Specify if the links should be rendered or not.
   , planes :: [Plane]
     -- ^ The different planes of the application.
+  , menus :: M.Map [Widget] Menu
+    -- ^ Mapping between the (pure) menus description and the (stateful)
+    -- menus. Each plane can have its own menu description.
   }
 
 currentPlane :: S -> Plane
@@ -30,6 +35,20 @@ currentPlane = head . planes
 
 replaceCurrentPlane :: S -> Plane -> S
 replaceCurrentPlane s p = s { planes = p : tail (planes s) }
+
+addPlane :: S -> Plane -> S
+addPlane s p = s { planes = planes s ++ [p] }
+
+emptyPlane :: Plane
+emptyPlane = Plane
+  { panXY = (0, 0)
+  , zoom = 1
+  , concepts = IM.empty
+  , links = IM.empty
+  , selection = []
+  , follow = []
+  , widgets = []
+  }
 
 cleanState :: S
 cleanState = S
@@ -39,14 +58,7 @@ cleanState = S
   , mouseXY = (0, 0)
   , snapTreshold = Just 10
   , hideLinks = False
-  , planes = [Plane
-    { panXY = (0, 0)
-    , zoom = 1
-    , concepts = IM.empty
-    , links = IM.empty
-    , selection = []
-    , follow = []
-    , widgets = []
-    } ]
+  , planes = [emptyPlane]
+  , menus = M.empty
   }
 
