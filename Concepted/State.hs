@@ -39,6 +39,9 @@ replaceCurrentPlane s p = s { planes = p : tail (planes s) }
 addPlane :: S -> Plane -> S
 addPlane s p = s { planes = planes s ++ [p] }
 
+planeMenuPairs :: S -> [(Plane, Menu)]
+planeMenuPairs s = zip (planes s) (M.elems $ menus s)
+
 emptyPlane :: Plane
 emptyPlane = Plane
   { panXY = (0, 0)

@@ -201,7 +201,7 @@ myLmbPress ctrl xy s = do
       selh = selectLinksHandles xy' (IM.toList $ links $ currentPlane s)
       sel = take 1 $ concat [selc, sell, selh]
 
-  mapM_ (pressMenu xy') (M.elems $ menus s)
+  mapM_ (\(p, m) -> pressMenu (screenToScene p xy) m) $ planeMenuPairs s
 
   return . replaceCurrentPlane s $ (currentPlane s) { selection = if ctrl
     then nub (sel ++ selection (currentPlane s))
@@ -209,10 +209,9 @@ myLmbPress ctrl xy s = do
 
 myLmbRelease :: Point -> S -> IO S
 myLmbRelease xy s = do
-  let xy' = screenToScene (currentPlane s) xy
-      q Nothing = return ()
+  let q Nothing = return ()
       q _ = mainQuit
-  mapM_ (releaseMenu xy' >=> q) (M.elems $ menus s)
+  mapM_ (\(p, m) -> releaseMenu (screenToScene p xy) m >>= q) $ planeMenuPairs s
 
   case selection $ currentPlane s of
     [] -> return s
@@ -240,7 +239,7 @@ myDraw s = do
   setSourceRGBA' background
   paint
 
-  mapM_ (renderPlane s) $ zip (planes s) (M.elems $ menus s)
+  mapM_ (renderPlane s) $ planeMenuPairs s
 
 renderPlane :: S -> (Plane, Menu) -> Render ()
 renderPlane s (p, m) = do
