@@ -7,6 +7,7 @@ import qualified Data.Map as M
 import Control.Monad.Reader
 import Control.Monad.State
 
+import Concepted.Graphics
 import Concepted.Plane
 import Concepted.Widget
 
@@ -69,7 +70,9 @@ cleanState = S
   , menus = M.empty
   }
 
-type CConf = ()
+data CConf = CConf
+  { confBackground :: RGBA
+  }
 
 type CState = S
 
