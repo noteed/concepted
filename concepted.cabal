@@ -25,6 +25,7 @@ executable concepted
                       containers,
                       directory,
                       gtk,
+                      mtl,
                       parsec,
                       pretty
 

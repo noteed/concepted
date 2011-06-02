@@ -7,7 +7,7 @@ import System.Environment (getArgs)
 import Graphics.UI.Gtk hiding
   ( eventKeyName, eventButton, eventModifier
   , Menu, Point, Rectangle, Widget
-  , add
+  , add, get
   )
 import Graphics.UI.Gtk.Gdk.Events (
   eventX, eventY, eventKeyName, eventButton, eventDirection, eventModifier)
@@ -15,6 +15,7 @@ import Graphics.Rendering.Cairo
 
 import Control.Concurrent
 import Control.Monad
+import Control.Monad.State
 
 import Data.List
 import Data.Maybe
@@ -54,7 +55,7 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    [] -> main' $ replaceCurrentPlane cleanState $ (currentPlane cleanState) {widgets =
+    [] -> main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState) {widgets =
       [ Label (10,20) "Alphaner"
       , Button (140,20) "Play" "play"
       , Button (240,20) "Configuration" "configure"
@@ -66,7 +67,7 @@ main = do
         Right a -> main' $ a { filename = Just fn } `addPlane` emptyPlane { widgets =
           [ Label (10,20) "Alphaner"
           , Button (140,20) "Play" "play"
-          , Button (240,20) "Configuration" "configure"
+          , Button (240,20) "Quit" "quit"
           ]}
     _ -> putStrLn "usage: concepted filename"
 
@@ -90,23 +91,14 @@ main' initialState = do
   sVar <- newMVar initialState { menus = ms' }
   
   onKeyPress window $ \e -> do
-    s <- takeMVar sVar
-    mstate <- myKeyPress (eventKeyName e) s
-    case mstate of
-      Nothing -> do
-        putMVar sVar s
-        return ()
-      Just s' -> do
-        putMVar sVar s'
-        widgetQueueDraw canvas
+    modifyMVar_ sVar $ \s -> execC () s $ myKeyPress (eventKeyName e)
+    widgetQueueDraw canvas
     return True
 
   onButtonPress canvas $ \e -> do
     case eventButton e of
       LeftButton -> do
-        s <- takeMVar sVar
-        s' <- myLmbPress (Control `elem` eventModifier e) (eventX e, eventY e) s
-        putMVar sVar s'
+        modifyMVar_ sVar $ \s -> execC () s $ myLmbPress (Control `elem` eventModifier e) (eventX e, eventY e)
         widgetQueueDraw canvas
       _ -> return ()
     return True
@@ -114,9 +106,7 @@ main' initialState = do
   onButtonRelease canvas $ \e -> do
     case eventButton e of
       LeftButton -> do
-        s <- takeMVar sVar
-        s' <- myLmbRelease (eventX e, eventY e) s
-        putMVar sVar s'
+        modifyMVar_ sVar $ \s -> execC () s $ myLmbRelease (eventX e, eventY e)
         widgetQueueDraw canvas
       _ -> return ()
     return True
@@ -124,12 +114,10 @@ main' initialState = do
   onScroll canvas $ \e -> do
     case eventDirection e of
       ScrollUp -> do
-        s <- takeMVar sVar
-        putMVar sVar (myScroll True s)
+        modifyMVar_ sVar $ \s -> execC () s $ myScroll True
         widgetQueueDraw canvas
       ScrollDown -> do
-        s <- takeMVar sVar
-        putMVar sVar (myScroll False s)
+        modifyMVar_ sVar $ \s -> execC () s $ myScroll False
         widgetQueueDraw canvas
       _ -> return ()
     return True
@@ -142,13 +130,13 @@ main' initialState = do
         dy = eventY e - snd (mouseXY s)
         lmb = Button1 `elem` (eventModifier e)
         rmb = Button3 `elem` (eventModifier e)
-    s' <- myMotion lmb rmb (dx, dy) $ s { mouseXY = (eventX e, eventY e) }
+    s' <- execC () s { mouseXY = (eventX e, eventY e) } $ myMotion lmb rmb (dx, dy)
     putMVar sVar s'
     widgetQueueDraw canvas
     return True
 
   onExpose canvas $ \_ -> do
-    (w,h) <- widgetGetSize canvas
+    (w, h) <- widgetGetSize canvas
     drawin <- widgetGetDrawWindow canvas
     s <- takeMVar sVar
     let s' = s { width = fromIntegral w, height = fromIntegral h }
@@ -163,75 +151,79 @@ main' initialState = do
 -- The main callbacks
 ----------------------------------------------------------------------
 
-myKeyPress :: String -> S -> IO (Maybe S)
-myKeyPress k s = case k of
+myKeyPress :: String -> C ()
+myKeyPress k = get >>= \s -> case k of
   "r" -> case filename s of
-    Nothing -> return Nothing
+    Nothing -> pass
     Just fn -> do
-      c <- readFile fn
+      c <- liftIO $ readFile fn
       case unserialize c of
-        Left err -> do
-          putStrLn $ "parse error: " ++ show err
-          return Nothing
+        Left err ->
+          liftIO . putStrLn $ "parse error: " ++ show err
         Right s' -> do
-          putStrLn $ fn ++ " reloaded"
-          return . Just . replaceCurrentPlane s $ (currentPlane s)
-            { concepts = concepts (currentPlane s')
-            , links = links (currentPlane s')
-            , follow = follow (currentPlane s')
+          liftIO . putStrLn $ fn ++ " reloaded"
+          change currentPlane $ \cp -> cp
+            { concepts = concepts (getCurrentPlane s')
+            , links = links (getCurrentPlane s')
+            , follow = follow (getCurrentPlane s')
             }
-  "plus" -> return . Just . replaceCurrentPlane s $ zoomAt (mouseXY s) 1.1 (currentPlane s)
-  "minus" -> return . Just . replaceCurrentPlane s $ zoomAt (mouseXY s) (1 / 1.1) (currentPlane s)
-  "l" -> return . Just $ s { hideLinks = not (hideLinks s) }
+  "plus" -> change currentPlane $ zoomAt (mouseXY s) 1.1
+  "minus" -> change currentPlane $ zoomAt (mouseXY s) (1 / 1.1)
+  "l" -> modify $ \s -> s { hideLinks = not (hideLinks s) }
   "c" -> do
-    let xy = screenToScene (currentPlane s) (mouseXY s)
-    return . Just . replaceCurrentPlane s $ newConcept xy (currentPlane s)
-  "Up" -> return . Just . replaceCurrentPlane s $ pan (0, 20) (currentPlane s)
-  "Down" -> return . Just . replaceCurrentPlane s $ pan (0, -20) (currentPlane s)
-  "Left" -> return . Just . replaceCurrentPlane s $ pan (20, 0) (currentPlane s)
-  "Right" -> return . Just . replaceCurrentPlane s $ pan (-20, 0) (currentPlane s)
-  "Escape" -> mainQuit >> return Nothing
-  _ -> return Nothing
+    mxy <- gets mouseXY
+    cp <- grab currentPlane
+    let xy = screenToScene cp mxy
+    change currentPlane $ newConcept xy
+  "Up" -> change currentPlane $ pan (0, 20)
+  "Down" -> change currentPlane $ pan (0, -20)
+  "Left" -> change currentPlane $ pan (20, 0)
+  "Right" -> change currentPlane $ pan (-20, 0)
+  "Escape" -> liftIO mainQuit
+  _ -> pass
 
-myLmbPress :: Bool -> Point -> S -> IO S
-myLmbPress ctrl xy s = do
-  let xy' = screenToScene (currentPlane s) xy
-      selc = select IdConcept xy' (IM.toList $ concepts $ currentPlane s)
-      sell = select IdLink xy' (IM.toList $ links $ currentPlane s)
-      selh = selectLinksHandles xy' (IM.toList $ links $ currentPlane s)
+myLmbPress :: Bool -> Point -> C ()
+myLmbPress ctrl xy = do
+  cp <- grab currentPlane
+  let xy' = screenToScene cp xy
+      selc = select IdConcept xy' (IM.toList $ concepts cp)
+      sell = select IdLink xy' (IM.toList $ links cp)
+      selh = selectLinksHandles xy' (IM.toList $ links cp)
       sel = take 1 $ concat [selc, sell, selh]
 
-  mapM_ (\(p, m) -> pressMenu (screenToScene p xy) m) $ planeMenuPairs s
+  pms <- gets planeMenuPairs
+  liftIO $ mapM_ (\(p, m) -> pressMenu (screenToScene p xy) m) pms
 
-  return . replaceCurrentPlane s $ (currentPlane s) { selection = if ctrl
-    then nub (sel ++ selection (currentPlane s))
-    else if null sel then selection $ currentPlane s else sel}
+  nail currentPlane $ cp { selection = if ctrl
+    then nub (sel ++ selection cp)
+    else if null sel then selection cp else sel}
 
-myLmbRelease :: Point -> S -> IO S
-myLmbRelease xy s = do
+myLmbRelease :: Point -> C ()
+myLmbRelease xy = do
+  s <- get
   let q Nothing = return ()
       q _ = mainQuit
-  mapM_ (\(p, m) -> releaseMenu (screenToScene p xy) m >>= q) $ planeMenuPairs s
+  liftIO $ mapM_ (\(p, m) -> releaseMenu (screenToScene p xy) m >>= q) $ planeMenuPairs s
 
-  case selection $ currentPlane s of
-    [] -> return s
-    _ -> case snapTreshold s of
-      Nothing -> return s
-      Just t -> return . replaceCurrentPlane s $ snapSelection t $ currentPlane s
+  change currentPlane $ snapSelection' $ snapTreshold s
+
+pass :: Monad m => m ()
+pass = return ()
 
 -- The bool specifies if it is up (true) or down (false).
-myScroll :: Bool -> S -> S
-myScroll up s = replaceCurrentPlane s $ if up
-  then zoomAt (mouseXY s) 1.1 $ currentPlane s
-  else zoomAt (mouseXY s) (1 / 1.1) $ currentPlane s
+myScroll :: Bool -> C ()
+myScroll up = do
+  mxy <- gets mouseXY
+  change currentPlane $ zoomAt mxy (if up then 1.1 else 1 / 1.1)
 
 -- The booleans specify if the lmb and rmb are pressed.
-myMotion :: Bool -> Bool -> (Double, Double) -> S -> IO S
-myMotion True False (dx, dy) s = do
-  let dxy' = screenToSceneDelta (currentPlane s) (dx, dy)
-  return . replaceCurrentPlane s $ mapSelection (move dxy') $ currentPlane s
-myMotion False True dxy s = return . replaceCurrentPlane s $ pan dxy $ currentPlane s
-myMotion _ _ _ s = return s
+myMotion :: Bool -> Bool -> (Double, Double) -> C ()
+myMotion True False (dx, dy) = do
+  cp <- grab currentPlane
+  let dxy' = screenToSceneDelta cp (dx, dy)
+  change currentPlane $ mapSelection (move dxy')
+myMotion False True dxy = change currentPlane $ pan dxy
+myMotion _ _ _ = pass
 
 myDraw :: S -> Render ()
 myDraw s = do
@@ -283,6 +275,10 @@ mapHandles f (Link xy rgba from verb to hs w) =
 
 snapSelection :: Int -> Plane -> Plane
 snapSelection t = mapSelection (\n -> setPosition (snapXY t $ position n) n)
+
+snapSelection' :: Maybe Int -> Plane -> Plane
+snapSelection' (Just t) = snapSelection t
+snapSelection' Nothing = id
 
 addFollow :: [Id] -> [(Id,Id)] -> [Id]
 addFollow [] _ = []

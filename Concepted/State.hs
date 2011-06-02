@@ -1,7 +1,11 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Concepted.State where
 
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+
+import Control.Monad.Reader
+import Control.Monad.State
 
 import Concepted.Plane
 import Concepted.Widget
@@ -30,8 +34,8 @@ data S = S
     -- menus. Each plane can have its own menu description.
   }
 
-currentPlane :: S -> Plane
-currentPlane = head . planes
+getCurrentPlane :: S -> Plane
+getCurrentPlane = head . planes
 
 replaceCurrentPlane :: S -> Plane -> S
 replaceCurrentPlane s p = s { planes = p : tail (planes s) }
@@ -65,3 +69,28 @@ cleanState = S
   , menus = M.empty
   }
 
+type CConf = ()
+
+type CState = S
+
+newtype C a = C (ReaderT CConf (StateT CState IO) a)
+    deriving (Functor, Monad, MonadIO, MonadState CState, MonadReader CConf)
+
+runC :: CConf -> CState -> C a -> IO (a, CState)
+runC c st (C a) = runStateT (runReaderT a c) st
+
+execC :: CConf -> CState -> C a -> IO CState
+execC c st (C a) = execStateT (runReaderT a c) st
+
+currentPlane :: (S -> Plane, S -> Plane -> S)
+currentPlane = (getCurrentPlane, replaceCurrentPlane)
+
+grab :: (S -> a, S -> b -> S) -> C a
+grab = gets . fst
+
+nail :: (S -> a, S -> b -> S) -> b -> C ()
+nail (_, f) = modify . flip f
+
+change :: (S -> a, S -> b -> S) -> (a -> b) -> C ()
+change gn f = grab gn >>= nail gn . f
+  
