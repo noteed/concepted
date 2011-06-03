@@ -53,8 +53,8 @@ main = do
   case args of
     [] -> main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState) {widgets =
       [ Label (10,20) "Alphaner"
-      , Button (140,20) "Play" "play"
-      , Button (240,20) "Configuration" "configure"
+      , Button (140,20) "Play" pass
+      , Button (240,20) "Configuration" (liftIO mainQuit)
       ]}
     [fn] -> do
       c <- readFile fn
@@ -62,12 +62,12 @@ main = do
         Left err -> putStrLn $ "Parse error: " ++ show err
         Right a -> main' $ a { filename = Just fn } `addPlane` emptyPlane { widgets =
           [ Label (10,20) "Alphaner"
-          , Button (140,20) "Play" "play"
-          , Button (240,20) "Quit" "quit"
+          , Button (140,20) "Play" (return ())
+          , Button (240,20) "Quit" (liftIO mainQuit)
           ]}
     _ -> putStrLn "usage: concepted filename"
 
-main' :: S -> IO ()
+main' :: CState -> IO ()
 main' initialState = do
   let config = CConf
         { confBackground = white
@@ -140,7 +140,7 @@ main' initialState = do
     (w, h) <- widgetGetSize canvas
     drawin <- widgetGetDrawWindow canvas
     s <- takeMVar sVar
-    let s' = s { width = fromIntegral w, height = fromIntegral h }
+    let s' = s { wwidth = fromIntegral w, wheight = fromIntegral h }
     putMVar sVar s'
     renderWithDrawable drawin (myDraw config s')
     return True
@@ -179,7 +179,7 @@ myKeyPress k = get >>= \s -> case k of
   "c" -> do
     mxy <- gets mouseXY
     cp <- grab currentPlane
-    let xy = screenToScene cp mxy
+    let xy = screenToPlane cp mxy
     change currentPlane $ newConcept xy
   "Up" -> change currentPlane $ pan (0, 20)
   "Down" -> change currentPlane $ pan (0, -20)
@@ -191,14 +191,14 @@ myKeyPress k = get >>= \s -> case k of
 myLmbPress :: Bool -> Point -> C ()
 myLmbPress ctrl xy = do
   cp <- grab currentPlane
-  let xy' = screenToScene cp xy
+  let xy' = screenToPlane cp xy
       selc = select IdConcept xy' (IM.toList $ concepts cp)
       sell = select IdLink xy' (IM.toList $ links cp)
       selh = selectLinksHandles xy' (IM.toList $ links cp)
       sel = take 1 $ concat [selc, sell, selh]
 
   pms <- gets planeMenuPairs
-  liftIO $ mapM_ (\(p, m) -> pressMenu (screenToScene p xy) m) pms
+  liftIO $ mapM_ (\(p, m) -> pressMenu (screenToPlane p xy) m) pms
 
   nail currentPlane $ cp { selection = if ctrl
     then nub (sel ++ selection cp)
@@ -209,7 +209,8 @@ myLmbRelease xy = do
   s <- get
   let q Nothing = return ()
       q _ = mainQuit
-  liftIO $ mapM_ (\(p, m) -> releaseMenu (screenToScene p xy) m >>= q) $ planeMenuPairs s
+  cmds <- liftIO $ mapM (\(p, m) -> releaseMenu (screenToPlane p xy) m) $ planeMenuPairs s
+  sequence_ $ mapMaybe id cmds
 
   change currentPlane $ snapSelection' $ snapTreshold s
 
@@ -226,12 +227,12 @@ myScroll up = do
 myMotion :: Bool -> Bool -> (Double, Double) -> C ()
 myMotion True False (dx, dy) = do
   cp <- grab currentPlane
-  let dxy' = screenToSceneDelta cp (dx, dy)
+  let dxy' = screenToPlaneDelta cp (dx, dy)
   change currentPlane $ mapSelection (move dxy')
 myMotion False True dxy = change currentPlane $ pan dxy
 myMotion _ _ _ = pass
 
-myDraw :: CConf -> S -> Render ()
+myDraw :: CConf -> CState -> Render ()
 myDraw config s = do
   -- clear
   setSourceRGBA' $ confBackground config
@@ -239,7 +240,7 @@ myDraw config s = do
 
   mapM_ (renderPlane s) $ planeMenuPairs s
 
-renderPlane :: S -> (Plane, Menu) -> Render ()
+renderPlane :: CState -> (Plane, Menu) -> Render ()
 renderPlane s (p, m) = do
   -- view the scene under the pan/zoom transform
   identityMatrix
@@ -255,7 +256,7 @@ renderPlane s (p, m) = do
   mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection p) j) $ zip [0..] $ handles b)
     (IM.toList $ links p)
 
-  let pos = screenToScene p $ mouseXY s
+  let pos = screenToPlane p $ mouseXY s
   renderMenu pos m
 
 ----------------------------------------------------------------------

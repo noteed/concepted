@@ -9,24 +9,13 @@ import Graphics.Rendering.Cairo
 
 import Concepted.Graphics
 import Concepted.Misc
-
-type Command = String
-
---data Mouse = Mouse | MousePressed Int
-type Mouse = Maybe Int
-
-data Menu = Menu [Widget] (MVar [(PShape,Int)]) (MVar Mouse)
+import Concepted.State
 
 newMenu :: [Widget] -> IO Menu
-newMenu widgets = do
+newMenu ws = do
   svar <- newMVar []
   mvar <- newMVar Nothing
-  return $ Menu widgets svar mvar
-
--- The pickable shape of a widget.
--- The computation of the size of a cairo text is done in the Render monad.
--- It is done during the rendering and kept for later (pure) reuse.
-data PShape = PRectangle Point Double Double
+  return $ Menu ws svar mvar
 
 pressMenu :: Point -> Menu -> IO ()
 pressMenu pos (Menu _ svar mvar) = do
@@ -34,13 +23,13 @@ pressMenu pos (Menu _ svar mvar) = do
   _ <- takeMVar mvar
   putMVar mvar $ pickMenu pos shapes
 
-releaseMenu :: Point -> Menu -> IO (Maybe Int)
-releaseMenu pos (Menu _ svar mvar) = do
+releaseMenu :: Point -> Menu -> IO (Maybe Command)
+releaseMenu pos (Menu ws svar mvar) = do
   shapes <- readMVar svar
   v <- takeMVar mvar
   putMVar mvar Nothing
   case (pickMenu pos shapes, v) of
-    (Just i, Just j) | i == j -> return $ Just i
+    (Just i, Just j) | i == j -> return $ widgetCommand (ws !! i)
     _ -> return Nothing
 
 pickMenu :: Point -> [(PShape,Int)] -> Maybe Int
@@ -50,9 +39,9 @@ pickPShape :: Point -> PShape -> Bool
 pickPShape ab (PRectangle xy w h) = containXYWH ab xy w h
 
 renderMenu :: Point -> Menu -> Render ()
-renderMenu pos (Menu widgets svar _) = do
+renderMenu pos (Menu ws svar _) = do
   _ <- liftIO $ takeMVar svar
-  pshapes <- renderMenu' pos widgets
+  pshapes <- renderMenu' pos ws
   liftIO $ putMVar svar pshapes
 
 renderMenu' :: Point -> [Widget] -> Render [(PShape,Int)]
@@ -62,11 +51,6 @@ renderMenu' mouse menu = do
   where f w i = do
           s <- renderWidget mouse w
           return $ fmap (,i) s
-
-data Widget =
-    Label Point String
-  | Button Point String Command
-  deriving (Show, Eq, Ord)
 
 sizeWidget :: Widget -> Render Double
 sizeWidget (Label _ ss) = textWidth 18 20 ss

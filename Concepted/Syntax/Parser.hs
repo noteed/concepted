@@ -7,7 +7,6 @@ import qualified Data.IntMap as IM
 import Text.ParserCombinators.Parsec hiding (setPosition)
 
 import Concepted.Graphics
-import Concepted.Plane
 import Concepted.State
 
 ----------------------------------------------------------------------
@@ -142,7 +141,7 @@ pFollow = do
   spaces
   return (a,b)
 
-pState :: P S
+pState :: P CState
 pState = do
   cs <- pConcepts
   ls <- pLinks
@@ -178,5 +177,5 @@ mkFollow' ls b = case b of
   Right i -> fromJust $ searchHandle i ls 0
   Left a -> a
 
-unserialize :: String -> Either ParseError S
+unserialize :: String -> Either ParseError CState
 unserialize = parse pState "unserialize"
