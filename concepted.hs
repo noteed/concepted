@@ -47,7 +47,6 @@ import Concepted.Misc (snapXY)
 ----------------------------------------------------------------------
 -- The main program
 ----------------------------------------------------------------------
-
 main :: IO ()
 main = do
   args <- getArgs
@@ -91,14 +90,15 @@ main' initialState = do
   sVar <- newMVar initialState { menus = ms' }
   
   onKeyPress window $ \e -> do
-    modifyMVar_ sVar $ \s -> execC config s $ myKeyPress (eventKeyName e)
+    modifyState config sVar $ myKeyPress (eventKeyName e)
     widgetQueueDraw canvas
     return True
 
   onButtonPress canvas $ \e -> do
     case eventButton e of
       LeftButton -> do
-        modifyMVar_ sVar $ \s -> execC config s $ myLmbPress (Control `elem` eventModifier e) (eventX e, eventY e)
+        modifyState config sVar $ myLmbPress (Control `elem` eventModifier e)
+          (eventX e, eventY e)
         widgetQueueDraw canvas
       _ -> return ()
     return True
@@ -106,7 +106,7 @@ main' initialState = do
   onButtonRelease canvas $ \e -> do
     case eventButton e of
       LeftButton -> do
-        modifyMVar_ sVar $ \s -> execC config s $ myLmbRelease (eventX e, eventY e)
+        modifyState config sVar $ myLmbRelease (eventX e, eventY e)
         widgetQueueDraw canvas
       _ -> return ()
     return True
@@ -114,10 +114,10 @@ main' initialState = do
   onScroll canvas $ \e -> do
     case eventDirection e of
       ScrollUp -> do
-        modifyMVar_ sVar $ \s -> execC config s $ myScroll True
+        modifyState config sVar $ myScroll True
         widgetQueueDraw canvas
       ScrollDown -> do
-        modifyMVar_ sVar $ \s -> execC config s $ myScroll False
+        modifyState config sVar $ myScroll False
         widgetQueueDraw canvas
       _ -> return ()
     return True
@@ -130,7 +130,8 @@ main' initialState = do
         dy = eventY e - snd (mouseXY s)
         lmb = Button1 `elem` (eventModifier e)
         rmb = Button3 `elem` (eventModifier e)
-    s' <- execC config s { mouseXY = (eventX e, eventY e) } $ myMotion lmb rmb (dx, dy)
+    s' <- execC config s { mouseXY = (eventX e, eventY e) } $
+      myMotion lmb rmb (dx, dy)
     putMVar sVar s'
     widgetQueueDraw canvas
     return True
@@ -146,6 +147,11 @@ main' initialState = do
  
   onDestroy window mainQuit
   mainGUI
+
+modifyState :: CConf -> MVar CState -> C a -> IO ()
+modifyState config sVar f =
+  modifyMVar_ sVar $ \s -> execC config s f
+
 
 ----------------------------------------------------------------------
 -- The main callbacks
