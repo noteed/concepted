@@ -1,8 +1,10 @@
 {-# Language RankNTypes #-}
 {-# Language TupleSections #-}
+{-# Language DeriveDataTypeable #-}
 module Main where
 
-import System.Environment (getArgs)
+import Paths_concepted (version)
+import Data.Version (showVersion)
 
 import Graphics.UI.Gtk hiding
   ( eventKeyName, eventButton, eventModifier
@@ -11,11 +13,13 @@ import Graphics.UI.Gtk hiding
   )
 import Graphics.UI.Gtk.Gdk.Events (
   eventX, eventY, eventKeyName, eventButton, eventDirection, eventModifier)
-import Graphics.Rendering.Cairo
+import Graphics.Rendering.Cairo hiding (versionString, version)
 
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.State
+
+import System.Console.CmdArgs.Implicit hiding ((:=))
 
 import Data.List
 import Data.Maybe
@@ -47,25 +51,51 @@ import Concepted.Misc (snapXY)
 ----------------------------------------------------------------------
 -- The main program
 ----------------------------------------------------------------------
+
 main :: IO ()
-main = do
-  args <- getArgs
-  case args of
-    [] -> main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState) {widgets =
+main = (>>= processCmd) . cmdArgs $
+  modes
+    [ edit
+    ]
+  &= summary versionString
+  &= program "concepted"
+
+versionString :: String
+versionString =
+  "concepted " ++ showVersion version ++
+  " -- Copyright (c) 2010-2011 Vo Minh Thu."
+
+data Cmd =
+    Edit
+    { editFile :: FilePath
+    }
+  deriving (Data, Typeable, Show, Eq)
+
+edit :: Cmd
+edit = Edit
+  { editFile = def
+    &= typFile
+    &= argPos 0
+    &= opt ""
+  } &= help "Edit a concept map."
+
+processCmd :: Cmd -> IO ()
+processCmd (Edit "") =
+  main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState) {widgets =
+    [ Label (10,20) "Alphaner"
+    , Button (140,20) "Play" pass
+    , Button (240,20) "Configuration" (liftIO mainQuit)
+    ]}
+
+processCmd (Edit fn) = do
+  c <- readFile fn
+  case unserialize c of
+    Left err -> putStrLn $ "Parse error: " ++ show err
+    Right a -> main' $ a { filename = Just fn } `addPlane` emptyPlane { widgets =
       [ Label (10,20) "Alphaner"
       , Button (140,20) "Play" pass
-      , Button (240,20) "Configuration" (liftIO mainQuit)
+      , Button (240,20) "Quit" (liftIO mainQuit)
       ]}
-    [fn] -> do
-      c <- readFile fn
-      case unserialize c of
-        Left err -> putStrLn $ "Parse error: " ++ show err
-        Right a -> main' $ a { filename = Just fn } `addPlane` emptyPlane { widgets =
-          [ Label (10,20) "Alphaner"
-          , Button (140,20) "Play" (return ())
-          , Button (240,20) "Quit" (liftIO mainQuit)
-          ]}
-    _ -> putStrLn "usage: concepted filename"
 
 main' :: CState -> IO ()
 main' initialState = do
@@ -175,7 +205,7 @@ myKeyPress k = get >>= \s -> case k of
             }
   "plus" -> change currentPlane $ zoomAt (mouseXY s) 1.1
   "minus" -> change currentPlane $ zoomAt (mouseXY s) (1 / 1.1)
-  "l" -> modify $ \s -> s { hideLinks = not (hideLinks s) }
+  "l" -> put $ s { hideLinks = not (hideLinks s) }
   "c" -> do
     mxy <- gets mouseXY
     cp <- grab currentPlane
@@ -207,8 +237,6 @@ myLmbPress ctrl xy = do
 myLmbRelease :: Point -> C ()
 myLmbRelease xy = do
   s <- get
-  let q Nothing = return ()
-      q _ = mainQuit
   cmds <- liftIO $ mapM (\(p, m) -> releaseMenu (screenToPlane p xy) m) $ planeMenuPairs s
   sequence_ $ mapMaybe id cmds
 

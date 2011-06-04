@@ -1,4 +1,4 @@
--- | This module defines a Plane data type and some operations on it.
+-- | This module defines some operations on it on the Plane data type.
 module Concepted.Plane where
 
 import qualified Data.IntMap as IM

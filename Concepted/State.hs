@@ -134,8 +134,6 @@ nail (_, f) = modify . flip f
 change :: MonadState s m => GN s a -> (a -> a) -> m ()
 change gn f = grab gn >>= nail gn . f
 
-type Command = C ()
-
 --data Mouse = Mouse | MousePressed Int
 type Mouse = Maybe Int
 
@@ -143,7 +141,7 @@ data Menu = Menu [Widget] (MVar [(PShape, Int)]) (MVar Mouse)
 
 data Widget =
     Label Point String
-  | Button Point String Command
+  | Button Point String (C ())
 
 instance Ord Widget where
   compare (Label _ a) (Label _ b) = compare a b
@@ -157,7 +155,7 @@ instance Eq Widget where
   (==) (Label _ a) (Button _ b _) = a == b
   (==) (Button _ a _) (Label _ b) = a == b
 
-widgetCommand :: Widget -> Maybe Command
+widgetCommand :: Widget -> Maybe (C ())
 widgetCommand (Label _ _) = Nothing
 widgetCommand (Button _ _ c) = Just c
 

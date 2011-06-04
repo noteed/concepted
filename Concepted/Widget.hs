@@ -23,7 +23,7 @@ pressMenu pos (Menu _ svar mvar) = do
   _ <- takeMVar mvar
   putMVar mvar $ pickMenu pos shapes
 
-releaseMenu :: Point -> Menu -> IO (Maybe Command)
+releaseMenu :: Point -> Menu -> IO (Maybe (C ()))
 releaseMenu pos (Menu ws svar mvar) = do
   shapes <- readMVar svar
   v <- takeMVar mvar
