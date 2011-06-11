@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ExistentialQuantification #-}
 module Concepted.State where
 
 import Data.IntMap (IntMap)
@@ -34,6 +35,8 @@ data CState = CState
   , menus :: M.Map [Widget] Menu
     -- ^ Mapping between the (pure) menus description and the (stateful)
     -- menus. Each plane can have its own menu description.
+  , handlers :: [HandlerState]
+  , wstatus :: String
   }
 
 cleanState :: CState
@@ -46,6 +49,8 @@ cleanState = CState
   , hideLinks = False
   , planes = [emptyPlane]
   , menus = M.empty
+  , handlers = []
+  , wstatus = "Uninitialized"
   }
 
 currentPlane :: Cx Plane
@@ -69,6 +74,11 @@ planeMenuPairs s = zip (planes s) (M.elems $ menus s)
 
 data CConf = CConf
   { confBackground :: RGBA
+  }
+
+cleanConf :: CConf
+cleanConf = CConf
+  { confBackground = white
   }
 
 ----------------------------------------------------------------------
@@ -134,6 +144,11 @@ nail (_, f) = modify . flip f
 change :: MonadState s m => GN s a -> (a -> a) -> m ()
 change gn f = grab gn >>= nail gn . f
 
+status :: String -> C ()
+status x = do
+  s <- get
+  put $ s { wstatus = x }
+
 --data Mouse = Mouse | MousePressed Int
 type Mouse = Maybe Int
 
@@ -163,3 +178,38 @@ widgetCommand (Button _ _ c) = Just c
 -- The computation of the size of a cairo text is done in the Render monad.
 -- It is done during the rendering and kept for later (pure) reuse.
 data PShape = PRectangle Point Double Double
+
+data Event = Key String Bool -- True/False means Pressed/Released.
+  deriving (Show)
+
+-- Nothing means the event was not handled and should be passed on to the next
+-- handler. Just True, means the event was handled and the handler should be
+-- removed. Just False, means the same but the handler should be kept.
+data HandlerState = forall a. HandlerState (Handler a) a
+
+type Handler a = Event -> a -> C (Handling a)
+
+data Handling a =
+    Ignored -- pass the event to the next handler
+  | End -- event is handled and the handler can be removed.
+  | Continue a -- the event is handled and the handler is kept with a new state.
+  | Install a HandlerState -- the event is handled, the handler is kept with a new state, and a new handler is added.
+  -- TODO the code of the handler can add the new handler by itself since it has acces to the C monad.
+
+-- Pass a single event to handlers.
+handle :: Event -> C ()
+handle e = do
+  hs <- gets handlers
+  hs' <- handle' e [] hs
+  s <- get
+  put $ s { handlers = hs' }
+
+handle' :: Event -> [HandlerState] -> [HandlerState] -> C [HandlerState]
+handle' _ acc [] = return (reverse acc)
+handle' e acc (HandlerState h a:hs) = do
+  r <- h e a
+  case r of
+    Ignored -> handle' e (HandlerState h a : acc) hs
+    End -> return (reverse acc ++ hs)
+    Continue b -> return (reverse acc ++ (HandlerState h b : hs))
+    Install b h' -> return (h' : reverse acc ++ (HandlerState h b : hs))

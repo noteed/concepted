@@ -13,7 +13,8 @@ import Graphics.UI.Gtk hiding
   )
 import Graphics.UI.Gtk.Gdk.Events (
   eventX, eventY, eventKeyName, eventButton, eventDirection, eventModifier)
-import Graphics.Rendering.Cairo hiding (versionString, version)
+import Graphics.Rendering.Cairo hiding (
+  status, versionString, version)
 
 import Control.Concurrent
 import Control.Monad
@@ -81,21 +82,33 @@ edit = Edit
 
 processCmd :: Cmd -> IO ()
 processCmd (Edit "") =
-  main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState) {widgets =
-    [ Label (10,20) "Alphaner"
-    , Button (140,20) "Play" pass
-    , Button (240,20) "Configuration" (liftIO mainQuit)
-    ]}
+  main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState)
+    { widgets =
+      [ Label (10,20) "Concepted"
+      , Button (140,20) "Pass" pass
+      , Button (240,20) "Configuration" (liftIO mainQuit)
+      ]
+    }
 
 processCmd (Edit fn) = do
   c <- readFile fn
   case unserialize c of
     Left err -> putStrLn $ "Parse error: " ++ show err
-    Right a -> main' $ a { filename = Just fn } `addPlane` emptyPlane { widgets =
-      [ Label (10,20) "Alphaner"
-      , Button (140,20) "Play" pass
-      , Button (240,20) "Quit" (liftIO mainQuit)
-      ]}
+    Right a -> main' $ a
+      { filename = Just fn
+      , handlers = [HandlerState xxx ()]
+      } `addPlane` emptyPlane
+      { widgets =
+        [ Label (10,20) "Concepted"
+        , Button (140,20) "Pass" pass
+        , Button (240,20) "Quit" (liftIO mainQuit)
+        ]
+      }
+
+xxx :: Handler ()
+xxx e _ = do
+  status $ "Pressed " ++ show e
+  return $ Continue ()
 
 main' :: CState -> IO ()
 main' initialState = do
@@ -216,7 +229,7 @@ myKeyPress k = get >>= \s -> case k of
   "Left" -> change currentPlane $ pan (20, 0)
   "Right" -> change currentPlane $ pan (-20, 0)
   "Escape" -> liftIO mainQuit
-  _ -> pass
+  x -> handle $ Key x True
 
 myLmbPress :: Bool -> Point -> C ()
 myLmbPress ctrl xy = do
@@ -263,8 +276,15 @@ myMotion _ _ _ = pass
 myDraw :: CConf -> CState -> Render ()
 myDraw config s = do
   -- clear
+  identityMatrix
   setSourceRGBA' $ confBackground config
   paint
+
+  -- status bar
+  setFontSize 12
+  setSourceRGBA' black
+  moveTo 5 $ wheight s - 5
+  showText $ wstatus s
 
   mapM_ (renderPlane s) $ planeMenuPairs s
 
