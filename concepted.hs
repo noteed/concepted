@@ -96,7 +96,7 @@ processCmd (Edit fn) = do
     Left err -> putStrLn $ "Parse error: " ++ show err
     Right a -> main' $ a
       { filename = Just fn
-      , handlers = [HandlerState xxx ()]
+      , handlers = [HandlerState linkSplitter Nothing, HandlerState xxx ()]
       } `addPlane` emptyPlane
       { widgets =
         [ Label (10,20) "Concepted"
@@ -105,7 +105,28 @@ processCmd (Edit fn) = do
         ]
       }
 
+linkSplitter :: Handler (Maybe Int)
+linkSplitter (Key "s" True) Nothing = do
+  sel <- gets $ selection . getCurrentPlane
+  case sel of
+    [IdLink i] -> do
+      status "link split"
+      return . Continue $ Just i
+    _ -> return Ignored
+linkSplitter (Key "s" True) (Just i) = do
+  s <- get
+  let cp = getCurrentPlane s
+      Just (Link p a b c d (Handle q:ps) e) = IM.lookup i $ links cp
+      pq = q `sub` p `divs` 2 `add` p
+  put $ replaceCurrentPlane s cp { links = IM.insert i (Link p a b c d (Handle pq:Handle q:ps) e) $ links cp }
+  return . Continue $ Just i
+linkSplitter _ _ = return Ignored
+
 xxx :: Handler ()
+xxx (Key "space" True) _ = do
+  sel <- gets $ selection . getCurrentPlane
+  status $ "Selection: " ++ show sel
+  return $ Continue ()
 xxx e _ = do
   status $ "Pressed " ++ show e
   return $ Continue ()
