@@ -122,6 +122,22 @@ linkSplitter (Key "s" True) (Just i) = do
   return . Continue $ Just i
 linkSplitter _ _ = return Ignored
 
+data LineEditor = NewLine Int
+
+lineEditor :: Handler LineEditor
+lineEditor (Key "lmb" True) (NewLine i) = do
+  s <- get
+  let cp = getCurrentPlane s
+      mxy = mouseXY s
+      xy = screenToPlane cp mxy
+      Just (Line ps) = IM.lookup i $ pLines cp
+  put $ replaceCurrentPlane s cp { pLines = IM.insert i (Line $ ps ++ [Handle xy]) $ pLines cp }
+  return . Continue $ NewLine i
+lineEditor (Key "Escape" True) _ = do
+  status "Stopped line editing"
+  return End
+lineEditor _ _ = return Ignored
+
 xxx :: Handler ()
 xxx (Key "space" True) _ = do
   sel <- gets $ selection . getCurrentPlane
@@ -129,7 +145,7 @@ xxx (Key "space" True) _ = do
   return $ Continue ()
 xxx e _ = do
   status $ "Pressed " ++ show e
-  return $ Continue ()
+  return Ignored
 
 main' :: CState -> IO ()
 main' initialState = do
@@ -222,51 +238,61 @@ modifyState config sVar f =
 ----------------------------------------------------------------------
 
 myKeyPress :: String -> C ()
-myKeyPress k = get >>= \s -> case k of
-  "r" -> case filename s of
-    Nothing -> pass
-    Just fn -> do
-      c <- liftIO $ readFile fn
-      case unserialize c of
-        Left err ->
-          liftIO . putStrLn $ "parse error: " ++ show err
-        Right s' -> do
-          liftIO . putStrLn $ fn ++ " reloaded"
-          change currentPlane $ \cp -> cp
-            { concepts = concepts (getCurrentPlane s')
-            , links = links (getCurrentPlane s')
-            , follow = follow (getCurrentPlane s')
-            }
-  "plus" -> change currentPlane $ zoomAt (mouseXY s) 1.1
-  "minus" -> change currentPlane $ zoomAt (mouseXY s) (1 / 1.1)
-  "l" -> put $ s { hideLinks = not (hideLinks s) }
-  "c" -> do
-    mxy <- gets mouseXY
-    cp <- grab currentPlane
-    let xy = screenToPlane cp mxy
-    change currentPlane $ newConcept xy
-  "Up" -> change currentPlane $ pan (0, 20)
-  "Down" -> change currentPlane $ pan (0, -20)
-  "Left" -> change currentPlane $ pan (20, 0)
-  "Right" -> change currentPlane $ pan (-20, 0)
-  "Escape" -> liftIO mainQuit
-  x -> handle $ Key x True
+myKeyPress k = do
+  b <- handle $ Key k True
+  if b
+    then return ()
+    else do
+      s <- get
+      case k of
+        "r" -> case filename s of
+          Nothing -> pass
+          Just fn -> do
+            c <- liftIO $ readFile fn
+            case unserialize c of
+              Left err ->
+                liftIO . putStrLn $ "parse error: " ++ show err
+              Right s' -> do
+                liftIO . putStrLn $ fn ++ " reloaded"
+                change currentPlane $ \cp -> cp
+                  { concepts = concepts (getCurrentPlane s')
+                  , links = links (getCurrentPlane s')
+                  , follow = follow (getCurrentPlane s')
+                  }
+        "plus" -> change currentPlane $ zoomAt (mouseXY s) 1.1
+        "minus" -> change currentPlane $ zoomAt (mouseXY s) (1 / 1.1)
+        "l" -> put $ s { hideLinks = not (hideLinks s) }
+        "c" -> changeAtXY currentPlane newConcept
+        "n" -> do
+          i <- newLine
+          modify (\s' -> s' { handlers = HandlerState lineEditor (NewLine i) : handlers s })
+          status $ "Editting line #" ++ show i ++ ", press Escape to stop"
+        "Up" -> change currentPlane $ pan (0, 20)
+        "Down" -> change currentPlane $ pan (0, -20)
+        "Left" -> change currentPlane $ pan (20, 0)
+        "Right" -> change currentPlane $ pan (-20, 0)
+        "Escape" -> liftIO mainQuit
+        _ -> pass
 
 myLmbPress :: Bool -> Point -> C ()
 myLmbPress ctrl xy = do
-  cp <- grab currentPlane
-  let xy' = screenToPlane cp xy
-      selc = select IdConcept xy' (IM.toList $ concepts cp)
-      sell = select IdLink xy' (IM.toList $ links cp)
-      selh = selectLinksHandles xy' (IM.toList $ links cp)
-      sel = take 1 $ concat [selc, sell, selh]
+  b <- handle $ Key "lmb" True
+  if b
+    then return ()
+    else do
+      cp <- grab currentPlane
+      let xy' = screenToPlane cp xy
+          selc = select IdConcept xy' (IM.toList $ concepts cp)
+          sell = select IdLink xy' (IM.toList $ links cp)
+          selh = selectLinksHandles xy' (IM.toList $ links cp)
+          sel = take 1 $ concat [selc, sell, selh]
 
-  pms <- gets planeMenuPairs
-  liftIO $ mapM_ (\(p, m) -> pressMenu (screenToPlane p xy) m) pms
+      pms <- gets planeMenuPairs
+      liftIO $ mapM_ (\(p, m) -> pressMenu (screenToPlane p xy) m) pms
 
-  nail currentPlane $ cp { selection = if ctrl
-    then nub (sel ++ selection cp)
-    else if null sel then selection cp else sel}
+      nail currentPlane $ cp { selection = if ctrl
+        then nub (sel ++ selection cp)
+        else if null sel then selection cp else sel}
 
 myLmbRelease :: Point -> C ()
 myLmbRelease xy = do
@@ -324,6 +350,7 @@ renderPlane s (p, m) = do
       (IM.toList $ links p)
   mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection p) j) $ zip [0..] $ handles b)
     (IM.toList $ links p)
+  mapM_ (\(_,b) -> renderLine b) (IM.toList $ pLines p)
 
   let pos = screenToPlane p $ mouseXY s
   renderMenu pos m
@@ -360,4 +387,18 @@ addFollow :: [Id] -> [(Id,Id)] -> [Id]
 addFollow [] _ = []
 addFollow sel fllw = sel ++ mapMaybe f fllw
   where f (a,b) = if a `elem` sel then Just b else Nothing
+
+-- | Similar to 'change' used in the C monad, but also provide the
+-- plane-local mouse coordinates.
+changeAtXY :: GN CState a -> (Point -> a -> a) -> C ()
+changeAtXY gn f = do
+  mxy <- gets mouseXY
+  cp <- grab currentPlane
+  let xy = screenToPlane cp mxy
+  change gn $ f xy
+
+newLine :: C Int
+newLine = do
+  change currentPlane newLine'
+  gets $ pred . IM.size . pLines . getCurrentPlane
 

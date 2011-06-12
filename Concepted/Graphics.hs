@@ -5,7 +5,9 @@ import Control.Monad
 
 import Concepted.Misc
 
--- Cairo function for Points.
+----------------------------------------------------------------------
+-- Cairo functions for Points.
+----------------------------------------------------------------------
 
 rectangleXY :: Point -> Double -> Double -> Render ()
 rectangleXY = uncurry rectangle
@@ -14,7 +16,7 @@ moveToXY :: Point -> Render ()
 moveToXY = uncurry moveTo
 
 ----------------------------------------------------------------------
--- Data
+-- Color
 ----------------------------------------------------------------------
 
 type RGBA = (Double,Double,Double,Double)
@@ -43,6 +45,10 @@ magenta = (1,0,1,1)
 orange :: RGBA
 orange = (1,0.7,0,1)
 
+----------------------------------------------------------------------
+-- Point
+----------------------------------------------------------------------
+
 type Point = (Double, Double)
 
 add :: Point -> (Double, Double) -> Point
@@ -57,11 +63,16 @@ muls (a, b) s = (a * s, b * s)
 divs :: (Double, Double) -> Double -> Point
 divs (a, b) s = (a / s, b / s)
 
+----------------------------------------------------------------------
+-- Objects
+----------------------------------------------------------------------
+
 -- Identify an object in a selection.
 data Id =
     IdConcept Int
   | IdLink Int
   | IdLinkHandle Int Int -- The Link id, then the control-point id.
+  | IdLine Int
   deriving (Eq, Show)
 
 -- x y (the center, not the upper-left corner)
@@ -78,6 +89,8 @@ data Concept =
 -- x y rgba from verb to control-points line-width
 data Link = Link Point RGBA Int String Int [Handle] Double
   deriving Show
+
+data Line = Line [Handle]
 
 handles :: Link -> [Handle]
 handles (Link _ _ _ _ _ hs _) = hs
@@ -154,6 +167,23 @@ renderLink selected (Link xy rgba _ v _ ps lw) = do
   let (xc,yc) = position (last ps)
   arc xc yc 3.0 0 (2*pi)
   fill
+
+renderLine :: Line -> Render ()
+renderLine (Line []) = return ()
+renderLine (Line (Handle p:ps)) = do
+  moveToXY p
+  -- the line
+  setLineJoin LineJoinRound
+  setLineWidth 1
+  setSourceRGBA' cyan
+  mapM_ (uncurry lineTo) (map position ps)
+  stroke
+  -- the vertices
+  let f p' = do
+        let (xc,yc) = position p'
+        arc xc yc 3.0 0 (2*pi)
+        fill
+  mapM_ f (Handle p:ps)
 
 pickConcept :: Point -> Concept -> Bool
 pickConcept ab (Rectangle xy _ w h) =

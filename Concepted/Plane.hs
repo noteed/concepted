@@ -38,3 +38,8 @@ zoomAt xy a s =
 newConcept :: Point -> Plane -> Plane
 newConcept xy s = s { concepts = IM.insert (IM.size $ concepts s) c $ concepts s }
   where c = Text xy black 20.0 14 ("concept #" ++ show (IM.size $ concepts s))
+
+-- | Add a new Line to the plane.
+newLine' :: Plane -> Plane
+newLine' s = s { pLines = IM.insert (IM.size $ pLines s) l $ pLines s }
+  where l = Line []

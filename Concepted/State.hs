@@ -101,6 +101,7 @@ data Plane = Plane
   , follow :: [(Id,Id)]
   -- ^ If (a,b) is in follow then whenever a is moved, b is moved too.
   , widgets :: [Widget]
+  , pLines :: IntMap Line
   }
 
 emptyPlane :: Plane
@@ -112,6 +113,7 @@ emptyPlane = Plane
   , selection = []
   , follow = []
   , widgets = []
+  , pLines = IM.empty
   }
 
 ----------------------------------------------------------------------
@@ -179,6 +181,7 @@ widgetCommand (Button _ _ c) = Just c
 -- It is done during the rendering and kept for later (pure) reuse.
 data PShape = PRectangle Point Double Double
 
+-- Key is used for mouse buttons too. The string can be "lmb", or "rmb".
 data Event = Key String Bool -- True/False means Pressed/Released.
   deriving (Show)
 
@@ -196,20 +199,23 @@ data Handling a =
   | Install a HandlerState -- the event is handled, the handler is kept with a new state, and a new handler is added.
   -- TODO the code of the handler can add the new handler by itself since it has acces to the C monad.
 
--- Pass a single event to handlers.
-handle :: Event -> C ()
+-- Pass a single event to handlers. The returned boolean specifies if the
+-- event was handled or not.
+handle :: Event -> C Bool
 handle e = do
   hs <- gets handlers
-  hs' <- handle' e [] hs
+  (hs', b) <- handle' e [] hs
   s <- get
   put $ s { handlers = hs' }
+  return b
 
-handle' :: Event -> [HandlerState] -> [HandlerState] -> C [HandlerState]
-handle' _ acc [] = return (reverse acc)
+-- The bool specifies if the event was handled or not.
+handle' :: Event -> [HandlerState] -> [HandlerState] -> C ([HandlerState], Bool)
+handle' _ acc [] = return (reverse acc, False)
 handle' e acc (HandlerState h a:hs) = do
   r <- h e a
   case r of
     Ignored -> handle' e (HandlerState h a : acc) hs
-    End -> return (reverse acc ++ hs)
-    Continue b -> return (reverse acc ++ (HandlerState h b : hs))
-    Install b h' -> return (h' : reverse acc ++ (HandlerState h b : hs))
+    End -> return (reverse acc ++ hs, True)
+    Continue b -> return (reverse acc ++ (HandlerState h b : hs), True)
+    Install b h' -> return (h' : reverse acc ++ (HandlerState h b : hs), True)
