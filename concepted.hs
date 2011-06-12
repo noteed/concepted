@@ -18,6 +18,7 @@ import Graphics.Rendering.Cairo hiding (
 
 import Control.Concurrent
 import Control.Monad
+import Control.Monad.Reader
 import Control.Monad.State
 
 import System.Console.CmdArgs.Implicit hiding ((:=))
@@ -271,6 +272,12 @@ myKeyPress k = do
         "Down" -> change currentPlane $ pan (0, -20)
         "Left" -> change currentPlane $ pan (20, 0)
         "Right" -> change currentPlane $ pan (-20, 0)
+        "Print" -> do
+          config <- ask
+          liftIO $ withImageSurface FormatARGB32 (wwidth s) (wheight s) $
+            \surf -> do
+              renderWith surf $ myDraw config s
+              surfaceWriteToPNG surf "screenshot.png"
         "Escape" -> liftIO mainQuit
         _ -> pass
 
@@ -330,7 +337,7 @@ myDraw config s = do
   -- status bar
   setFontSize 12
   setSourceRGBA' black
-  moveTo 5 $ wheight s - 5
+  moveTo 5 $ (fromIntegral $ wheight s) - 5
   showText $ wstatus s
 
   mapM_ (renderPlane s) $ planeMenuPairs s

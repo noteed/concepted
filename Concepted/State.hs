@@ -18,9 +18,9 @@ import Concepted.Graphics
 ----------------------------------------------------------------------
 
 data CState = CState
-  { wwidth :: Double
+  { wwidth :: Int
     -- ^ Gtk window width.
-  , wheight :: Double
+  , wheight :: Int
     -- ^ Gtk window height.
   , filename :: Maybe String
     -- ^ The edited file, if any.
