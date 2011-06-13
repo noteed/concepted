@@ -221,7 +221,7 @@ main' initialState = do
     (w, h) <- widgetGetSize canvas
     drawin <- widgetGetDrawWindow canvas
     s <- takeMVar sVar
-    let s' = s { wwidth = fromIntegral w, wheight = fromIntegral h }
+    let s' = s { wwidth = w, wheight = h }
     putMVar sVar s'
     renderWithDrawable drawin (myDraw config s')
     return True
