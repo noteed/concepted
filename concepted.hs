@@ -22,6 +22,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 
 import System.Console.CmdArgs.Implicit hiding ((:=))
+import Data.Time.Clock
 
 import Data.List
 import Data.Maybe
@@ -34,6 +35,7 @@ import Concepted.Syntax.Parser
 import Concepted.Plane
 import Concepted.State
 import Concepted.Misc (snapXY)
+import Concepted.Zombies
 
 -- TODO: it would be nice to automatically reload a file when it
 -- is externally modified.
@@ -97,7 +99,7 @@ processCmd (Edit fn) = do
     Left err -> putStrLn $ "Parse error: " ++ show err
     Right a -> main' $ a
       { filename = Just fn
-      , handlers = [HandlerState linkSplitter Nothing, HandlerState xxx ()]
+      , handlers = [HandlerState xxx ()]
       } `addPlane` emptyPlane
       { widgets =
         [ Label (10,20) "Concepted"
@@ -168,10 +170,16 @@ main' initialState = do
   let ws = map widgets $ planes initialState
   ms <- mapM newMenu ws
   let ms' = M.fromList $ zip ws ms
-  sVar <- newMVar initialState { menus = ms' }
+  t <- getCurrentTime
+  sVar <- newMVar initialState { menus = ms', wtime = t }
   
   onKeyPress window $ \e -> do
     modifyState config sVar $ myKeyPress (eventKeyName e)
+    widgetQueueDraw canvas
+    return True
+
+  onKeyRelease window $ \e -> do
+    modifyState config sVar $ myKeyRelease (eventKeyName e)
     widgetQueueDraw canvas
     return True
 
@@ -222,16 +230,38 @@ main' initialState = do
     drawin <- widgetGetDrawWindow canvas
     s <- takeMVar sVar
     let s' = s { wwidth = w, wheight = h }
-    putMVar sVar s'
-    renderWithDrawable drawin (myDraw config s')
+    (r, s'') <- do
+      widgetQueueDraw canvas
+      runC config s' (advance >> myDraw)
+    putMVar sVar s''
+    renderWithDrawable drawin r
     return True
- 
+{-
+  flip idleAdd priorityLow $ do
+    s <- takeMVar sVar
+    s' <- execC config s advance
+    putMVar sVar s'
+    return True
+ -}
   onDestroy window mainQuit
   mainGUI
 
 modifyState :: CConf -> MVar CState -> C a -> IO ()
 modifyState config sVar f =
   modifyMVar_ sVar $ \s -> execC config s f
+
+advance = do
+  s <- get
+
+  t <- liftIO getCurrentTime
+  let dt = realToFrac (t `diffUTCTime` wtime s) -- in seconds
+      available = dt + waccumulated s
+      steps = floor $ available / stepsize
+      remaining = available - (fromIntegral steps * stepsize)
+  put s { wtime = t, waccumulated = remaining }
+
+  change currentPlane $ \p -> p { pPlayer1 = updateN steps $ pPlayer1 p }
+  change currentPlane $ \p -> p { pBullets = map (updateBulletN steps) $ pBullets p } -- TODO prune bullets
 
 
 ----------------------------------------------------------------------
@@ -268,17 +298,37 @@ myKeyPress k = do
           i <- newLine
           modify (\s' -> s' { handlers = HandlerState lineEditor (NewLine i) : handlers s })
           status $ "Editting line #" ++ show i ++ ", press Escape to stop"
+        "z" -> change currentPlane $ \p -> p { pPlayer1 = setUp True $ pPlayer1 p }
+        "q" -> change currentPlane $ \p -> p { pPlayer1 = setLeft True $ pPlayer1 p }
+        "s" -> change currentPlane $ \p -> p { pPlayer1 = setDown True $ pPlayer1 p }
+        "d" -> change currentPlane $ \p -> p { pPlayer1 = setRight True $ pPlayer1 p }
+        "x" -> change currentPlane $ \p -> p { pBullets = PlayerBullet (pPosition $ pPlayer1 p)
+          (norm (pMouse (pPlayer1 p) `sub` pPosition (pPlayer1 p)) `muls` 2) : take 20 (pBullets p) }
         "Up" -> change currentPlane $ pan (0, 20)
         "Down" -> change currentPlane $ pan (0, -20)
         "Left" -> change currentPlane $ pan (20, 0)
         "Right" -> change currentPlane $ pan (-20, 0)
         "Print" -> do
           config <- ask
+          r <- liftIO $ evalC config s myDraw -- discard modified state
           liftIO $ withImageSurface FormatARGB32 (wwidth s) (wheight s) $
             \surf -> do
-              renderWith surf $ myDraw config s
+              renderWith surf r
               surfaceWriteToPNG surf "screenshot.png"
         "Escape" -> liftIO mainQuit
+        _ -> pass
+
+myKeyRelease :: String -> C ()
+myKeyRelease k = do
+  b <- handle $ Key k False
+  if b
+    then return ()
+    else do
+      case k of
+        "z" -> change currentPlane $ \p -> p { pPlayer1 = setUp False $ pPlayer1 p }
+        "q" -> change currentPlane $ \p -> p { pPlayer1 = setLeft False $ pPlayer1 p }
+        "s" -> change currentPlane $ \p -> p { pPlayer1 = setDown False $ pPlayer1 p }
+        "d" -> change currentPlane $ \p -> p { pPlayer1 = setRight False $ pPlayer1 p }
         _ -> pass
 
 myLmbPress :: Bool -> Point -> C ()
@@ -322,25 +372,41 @@ myScroll up = do
 myMotion :: Bool -> Bool -> (Double, Double) -> C ()
 myMotion True False (dx, dy) = do
   cp <- grab currentPlane
+  xy <- gets mouseXY
   let dxy' = screenToPlaneDelta cp (dx, dy)
+      xy' = screenToPlane cp xy
   change currentPlane $ mapSelection (move dxy')
-myMotion False True dxy = change currentPlane $ pan dxy
-myMotion _ _ _ = pass
+  change currentPlane $ \p -> p { pPlayer1 = setMouse xy' $ pPlayer1 p }
+myMotion False True dxy = do
+  cp <- grab currentPlane
+  xy <- gets mouseXY
+  let xy' = screenToPlane cp xy
+  change currentPlane $ pan dxy
+  change currentPlane $ \p -> p { pPlayer1 = setMouse xy' $ pPlayer1 p }
+myMotion _ _ _ = do
+  cp <- grab currentPlane
+  xy <- gets mouseXY
+  let xy' = screenToPlane cp xy
+  change currentPlane $ \p -> p { pPlayer1 = setMouse xy' $ pPlayer1 p }
 
-myDraw :: CConf -> CState -> Render ()
-myDraw config s = do
-  -- clear
-  identityMatrix
-  setSourceRGBA' $ confBackground config
-  paint
+myDraw :: C (Render ())
+myDraw = do
+  config <- ask
+  s <- get
 
-  -- status bar
-  setFontSize 12
-  setSourceRGBA' black
-  moveTo 5 $ (fromIntegral $ wheight s) - 5
-  showText $ wstatus s
+  return $ do
+    -- clear
+    identityMatrix
+    setSourceRGBA' $ confBackground config
+    paint
 
-  mapM_ (renderPlane s) $ planeMenuPairs s
+    -- status bar
+    setFontSize 12
+    setSourceRGBA' black
+    moveTo 5 $ (fromIntegral $ wheight s) - 5
+    showText $ wstatus s
+
+    mapM_ (renderPlane s) $ planeMenuPairs s
 
 renderPlane :: CState -> (Plane, Menu) -> Render ()
 renderPlane s (p, m) = do
@@ -358,6 +424,9 @@ renderPlane s (p, m) = do
   mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection p) j) $ zip [0..] $ handles b)
     (IM.toList $ links p)
   mapM_ (\(_,b) -> renderLine b) (IM.toList $ pLines p)
+  mapM_ (\(_,b) -> renderZombie b) (IM.toList $ pZombies p)
+  renderPlayer $ pPlayer1 p
+  mapM_ renderBullet $ pBullets p
 
   let pos = screenToPlane p $ mouseXY s
   renderMenu pos m
@@ -408,4 +477,3 @@ newLine :: C Int
 newLine = do
   change currentPlane newLine'
   gets $ pred . IM.size . pLines . getCurrentPlane
-

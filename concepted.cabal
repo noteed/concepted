@@ -28,7 +28,8 @@ executable concepted
                       gtk,
                       mtl,
                       parsec,
-                      pretty
+                      pretty,
+                      time
 
   ghc-options:        -Wall
                       -fno-warn-unused-do-bind

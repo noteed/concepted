@@ -7,11 +7,13 @@ import qualified Data.IntMap as IM
 import qualified Data.Map as M
 
 import Control.Concurrent (MVar)
+import Data.Time.Clock
 
 import Control.Monad.Reader
 import Control.Monad.State
 
 import Concepted.Graphics
+import Concepted.Zombies
 
 ----------------------------------------------------------------------
 -- The main state of the program
@@ -37,6 +39,8 @@ data CState = CState
     -- menus. Each plane can have its own menu description.
   , handlers :: [HandlerState]
   , wstatus :: String
+  , wtime :: UTCTime -- last value
+  , waccumulated :: Double -- accumulated time (pool of time from which steps are drawn).
   }
 
 cleanState :: CState
@@ -51,6 +55,8 @@ cleanState = CState
   , menus = M.empty
   , handlers = []
   , wstatus = "Uninitialized"
+  , wtime = undefined
+  , waccumulated = 0
   }
 
 currentPlane :: Cx Plane
@@ -102,6 +108,9 @@ data Plane = Plane
   -- ^ If (a,b) is in follow then whenever a is moved, b is moved too.
   , widgets :: [Widget]
   , pLines :: IntMap Line
+  , pZombies :: IntMap Zombie
+  , pPlayer1 :: Player
+  , pBullets :: [PlayerBullet]
   }
 
 emptyPlane :: Plane
@@ -114,6 +123,9 @@ emptyPlane = Plane
   , follow = []
   , widgets = []
   , pLines = IM.empty
+  , pZombies = IM.fromList [(0, Zombie (200, 100))]
+  , pPlayer1 = Player (300, 150) 0 (PlayerInput False False False False) (0, 0)
+  , pBullets = []
   }
 
 ----------------------------------------------------------------------
@@ -128,6 +140,9 @@ runC c st (C a) = runStateT (runReaderT a c) st
 
 execC :: CConf -> CState -> C a -> IO CState
 execC c st (C a) = execStateT (runReaderT a c) st
+
+evalC :: CConf -> CState -> C a -> IO a
+evalC c st (C a) = evalStateT (runReaderT a c) st
 
 -- Getter/Setter pair specialized on a CState.
 -- ('Cx' as in CState exchange.) 

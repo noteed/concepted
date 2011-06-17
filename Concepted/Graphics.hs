@@ -30,6 +30,12 @@ white = (1,1,1,1)
 red :: RGBA
 red = (1,0,0,1)
 
+green :: RGBA
+green = (0,1,0,1)
+
+blue :: RGBA
+blue = (0,0,1,1)
+
 grey :: RGBA
 grey = (0.6,0.6,0.6,1)
 
@@ -62,6 +68,9 @@ muls (a, b) s = (a * s, b * s)
 
 divs :: (Double, Double) -> Double -> Point
 divs (a, b) s = (a / s, b / s)
+
+norm (a, b) = muls (a, b) s
+  where s = 1 / (sqrt $ a * a + b * b) -- TODO divide by zero
 
 ----------------------------------------------------------------------
 -- Objects
