@@ -21,12 +21,15 @@ executable concepted
   main-is:            concepted.hs
 
   build-depends:      base >= 4.0,
+                      bytestring,
                       cairo,
+                      cereal,
                       cmdargs,
                       containers,
                       directory,
                       gtk,
                       mtl,
+                      network-silo,
                       parsec,
                       pretty,
                       time

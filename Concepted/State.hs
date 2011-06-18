@@ -108,7 +108,7 @@ data Plane = Plane
   -- ^ If (a,b) is in follow then whenever a is moved, b is moved too.
   , widgets :: [Widget]
   , pLines :: IntMap Line
-  , pZombies :: IntMap Zombie
+  , pZombies :: [Zombie]
   , pPlayer1 :: Player
   , pBullets :: [PlayerBullet]
   }
@@ -123,7 +123,7 @@ emptyPlane = Plane
   , follow = []
   , widgets = []
   , pLines = IM.empty
-  , pZombies = IM.fromList [(0, Zombie (200, 100))]
+  , pZombies = [Zombie (200, 100), Zombie (240, 130)]
   , pPlayer1 = Player (300, 150) 0 (PlayerInput False False False False) (0, 0)
   , pBullets = []
   }

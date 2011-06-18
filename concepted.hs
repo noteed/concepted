@@ -1,6 +1,7 @@
 {-# Language RankNTypes #-}
 {-# Language TupleSections #-}
 {-# Language DeriveDataTypeable #-}
+{-# Language OverloadedStrings #-}
 module Main where
 
 import Paths_concepted (version)
@@ -28,6 +29,12 @@ import Data.List
 import Data.Maybe
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+
+import Data.ByteString.Char8 (ByteString)
+import qualified Data.ByteString.Char8 as C
+--import Data.Serialize
+
+import Network.Silo hiding (handle)
 
 import Concepted.Graphics
 import Concepted.Widget
@@ -80,7 +87,7 @@ edit = Edit
   { editFile = def
     &= typFile
     &= argPos 0
-    &= opt ""
+    &= opt ("" :: String)
   } &= help "Edit a concept map."
 
 processCmd :: Cmd -> IO ()
@@ -88,8 +95,8 @@ processCmd (Edit "") =
   main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState)
     { widgets =
       [ Label (10,20) "Concepted"
-      , Button (140,20) "Pass" pass
-      , Button (240,20) "Configuration" (liftIO mainQuit)
+      , Button (140,20) "Reset" reset
+      , Button (240,20) "Quit" (liftIO mainQuit)
       ]
     }
 
@@ -244,24 +251,38 @@ main' initialState = do
     return True
  -}
   onDestroy window mainQuit
+  forkIO $ serve Nothing 9000 $ handler config sVar
   mainGUI
+
+handler :: CConf -> MVar CState -> ByteString -> IO ByteString
+handler config sVar bs = do
+  s <- takeMVar sVar
+  s' <- execC config s $ do
+    liftIO $ C.putStrLn bs
+  putMVar sVar s'
+  return "OK"
 
 modifyState :: CConf -> MVar CState -> C a -> IO ()
 modifyState config sVar f =
   modifyMVar_ sVar $ \s -> execC config s f
 
+advance :: C ()
 advance = do
   s <- get
 
   t <- liftIO getCurrentTime
   let dt = realToFrac (t `diffUTCTime` wtime s) -- in seconds
       available = dt + waccumulated s
-      steps = floor $ available / stepsize
+      steps = floor $ available / stepsize :: Int
       remaining = available - (fromIntegral steps * stepsize)
   put s { wtime = t, waccumulated = remaining }
 
   change currentPlane $ \p -> p { pPlayer1 = updateN steps $ pPlayer1 p }
   change currentPlane $ \p -> p { pBullets = map (updateBulletN steps) $ pBullets p } -- TODO prune bullets
+  change currentPlane $ \p -> p { pZombies = filter (not . isDead (pBullets p)) $ pZombies p }
+
+reset :: C ()
+reset = change currentPlane $ \p -> p { pZombies = pZombies emptyPlane }
 
 
 ----------------------------------------------------------------------
@@ -303,8 +324,8 @@ myKeyPress k = do
         "s" -> change currentPlane $ \p -> p { pPlayer1 = setDown True $ pPlayer1 p }
         "d" -> change currentPlane $ \p -> p { pPlayer1 = setRight True $ pPlayer1 p }
         "x" -> change currentPlane $ \p -> p { pBullets = PlayerBullet (pPosition $ pPlayer1 p)
-          (norm (pMouse (pPlayer1 p) `sub` pPosition (pPlayer1 p)) `muls` 2) : take 20 (pBullets p) }
-        "Up" -> change currentPlane $ pan (0, 20)
+          (normalize (pMouse (pPlayer1 p) `sub` pPosition (pPlayer1 p)) `muls` 2) : take 20 (pBullets p) }
+        "Up" -> change currentPlane $ pan (0, 20) -- TODO change the zombi mouse info
         "Down" -> change currentPlane $ pan (0, -20)
         "Left" -> change currentPlane $ pan (20, 0)
         "Right" -> change currentPlane $ pan (-20, 0)
@@ -424,7 +445,7 @@ renderPlane s (p, m) = do
   mapM_ (\(a,b) -> mapM_ (\(i,j) -> renderHandle (IdLinkHandle a i `elem` selection p) j) $ zip [0..] $ handles b)
     (IM.toList $ links p)
   mapM_ (\(_,b) -> renderLine b) (IM.toList $ pLines p)
-  mapM_ (\(_,b) -> renderZombie b) (IM.toList $ pZombies p)
+  mapM_ renderZombie (pZombies p)
   renderPlayer $ pPlayer1 p
   mapM_ renderBullet $ pBullets p
 

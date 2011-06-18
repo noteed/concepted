@@ -69,8 +69,10 @@ muls (a, b) s = (a * s, b * s)
 divs :: (Double, Double) -> Double -> Point
 divs (a, b) s = (a / s, b / s)
 
-norm (a, b) = muls (a, b) s
+normalize (a, b) = muls (a, b) s
   where s = 1 / (sqrt $ a * a + b * b) -- TODO divide by zero
+
+norm (a, b) = sqrt $ a * a + b * b
 
 ----------------------------------------------------------------------
 -- Objects
