@@ -41,6 +41,7 @@ data CState = CState
   , wstatus :: String
   , wtime :: UTCTime -- last value
   , waccumulated :: Double -- accumulated time (pool of time from which steps are drawn).
+  , wserver :: Bool -- ^ is a server (or a client)?
   }
 
 cleanState :: CState
@@ -57,6 +58,7 @@ cleanState = CState
   , wstatus = "Uninitialized"
   , wtime = undefined
   , waccumulated = 0
+  , wserver = False
   }
 
 currentPlane :: Cx Plane
@@ -110,6 +112,7 @@ data Plane = Plane
   , pLines :: IntMap Line
   , pZombies :: [Zombie]
   , pPlayer1 :: Player
+  , pPlayer2 :: Player
   , pBullets :: [PlayerBullet]
   }
 
@@ -125,6 +128,7 @@ emptyPlane = Plane
   , pLines = IM.empty
   , pZombies = [Zombie (200, 100), Zombie (240, 130)]
   , pPlayer1 = Player (300, 150) 0 (PlayerInput False False False False) (0, 0)
+  , pPlayer2 = Player (340, 120) 0 (PlayerInput False False False False) (0, 0)
   , pBullets = []
   }
 

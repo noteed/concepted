@@ -32,7 +32,7 @@ import qualified Data.Map as M
 
 import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as C
---import Data.Serialize
+import qualified Data.Serialize as S
 
 import Network.Silo hiding (handle)
 
@@ -79,6 +79,7 @@ versionString =
 data Cmd =
     Edit
     { editFile :: FilePath
+    , isServer :: Bool
     }
   deriving (Data, Typeable, Show, Eq)
 
@@ -88,11 +89,16 @@ edit = Edit
     &= typFile
     &= argPos 0
     &= opt ("" :: String)
+  , isServer = def
+    &= explicit
+    &= name "s"
+    &= name "server"
+    &= help "Start minizombs in server mode."
   } &= help "Edit a concept map."
 
 processCmd :: Cmd -> IO ()
-processCmd (Edit "") =
-  main' $ replaceCurrentPlane cleanState $ (getCurrentPlane cleanState)
+processCmd (Edit "" b) = do
+  main' $ replaceCurrentPlane cleanState { wserver = b } $ (getCurrentPlane cleanState)
     { widgets =
       [ Label (10,20) "Concepted"
       , Button (140,20) "Reset" reset
@@ -100,7 +106,7 @@ processCmd (Edit "") =
       ]
     }
 
-processCmd (Edit fn) = do
+processCmd (Edit fn _) = do
   c <- readFile fn
   case unserialize c of
     Left err -> putStrLn $ "Parse error: " ++ show err
@@ -251,16 +257,33 @@ main' initialState = do
     return True
  -}
   onDestroy window mainQuit
-  forkIO $ serve Nothing 9000 $ handler config sVar
+  when (wserver initialState) $ do
+    putStrLn "minizombs in server mode"
+    _ <- forkIO $ serve Nothing 9000 $ handler config sVar
+    return ()
   mainGUI
 
-handler :: CConf -> MVar CState -> ByteString -> IO ByteString
-handler config sVar bs = do
+handler :: CConf -> MVar CState -> Message -> IO ByteString
+handler config sVar msg = do
   s <- takeMVar sVar
   s' <- execC config s $ do
-    liftIO $ C.putStrLn bs
+    player2 msg
   putMVar sVar s'
   return "OK"
+
+playerShoot player =
+  change currentPlane $ \p -> p { pBullets = PlayerBullet (pPosition $ player p)
+    (normalize (pMouse (player p) `sub` pPosition (player p)) `muls` 2) : take 20 (pBullets p) }
+
+player2 :: Message -> C ()
+player2 msg = case msg of
+  Shoot -> playerShoot pPlayer2
+  Look x y -> change currentPlane $ changePlayer2 (setMouse (x, y))
+  _ -> return ()
+
+changePlayer1 f p = p { pPlayer1 = f $ pPlayer1 p }
+
+changePlayer2 f p = p { pPlayer2 = f $ pPlayer2 p }
 
 modifyState :: CConf -> MVar CState -> C a -> IO ()
 modifyState config sVar f =
@@ -278,6 +301,7 @@ advance = do
   put s { wtime = t, waccumulated = remaining }
 
   change currentPlane $ \p -> p { pPlayer1 = updateN steps $ pPlayer1 p }
+  change currentPlane $ \p -> p { pPlayer2 = updateN steps $ pPlayer2 p }
   change currentPlane $ \p -> p { pBullets = map (updateBulletN steps) $ pBullets p } -- TODO prune bullets
   change currentPlane $ \p -> p { pZombies = filter (not . isDead (pBullets p)) $ pZombies p }
 
@@ -323,8 +347,10 @@ myKeyPress k = do
         "q" -> change currentPlane $ \p -> p { pPlayer1 = setLeft True $ pPlayer1 p }
         "s" -> change currentPlane $ \p -> p { pPlayer1 = setDown True $ pPlayer1 p }
         "d" -> change currentPlane $ \p -> p { pPlayer1 = setRight True $ pPlayer1 p }
-        "x" -> change currentPlane $ \p -> p { pBullets = PlayerBullet (pPosition $ pPlayer1 p)
-          (normalize (pMouse (pPlayer1 p) `sub` pPosition (pPlayer1 p)) `muls` 2) : take 20 (pBullets p) }
+        "x" -> do
+          if wserver s
+            then playerShoot pPlayer1
+            else liftIO $ send "127.0.0.1" 9000 Shoot
         "Up" -> change currentPlane $ pan (0, 20) -- TODO change the zombi mouse info
         "Down" -> change currentPlane $ pan (0, -20)
         "Left" -> change currentPlane $ pan (20, 0)
@@ -391,24 +417,26 @@ myScroll up = do
 
 -- The booleans specify if the lmb and rmb are pressed.
 myMotion :: Bool -> Bool -> (Double, Double) -> C ()
-myMotion True False (dx, dy) = do
+myMotion lmb rmb (dx, dy) = do
   cp <- grab currentPlane
   xy <- gets mouseXY
+  let xy' = screenToPlane cp xy
+  sv <- gets wserver
+  let changePlayer = if sv then changePlayer1 else changePlayer2
+  when (not sv) $ do
+    liftIO $ send "127.0.0.1" 9000 (Look (fst xy') (snd xy'))
+    return ()
+  change currentPlane $ changePlayer (setMouse xy')
+  myMotion' lmb rmb (dx, dy)
+
+myMotion' :: Bool -> Bool -> (Double, Double) -> C ()
+myMotion' True False (dx, dy) = do
+  cp <- grab currentPlane
   let dxy' = screenToPlaneDelta cp (dx, dy)
-      xy' = screenToPlane cp xy
   change currentPlane $ mapSelection (move dxy')
-  change currentPlane $ \p -> p { pPlayer1 = setMouse xy' $ pPlayer1 p }
-myMotion False True dxy = do
-  cp <- grab currentPlane
-  xy <- gets mouseXY
-  let xy' = screenToPlane cp xy
+myMotion' False True dxy = do
   change currentPlane $ pan dxy
-  change currentPlane $ \p -> p { pPlayer1 = setMouse xy' $ pPlayer1 p }
-myMotion _ _ _ = do
-  cp <- grab currentPlane
-  xy <- gets mouseXY
-  let xy' = screenToPlane cp xy
-  change currentPlane $ \p -> p { pPlayer1 = setMouse xy' $ pPlayer1 p }
+myMotion' _ _ _ = return ()
 
 myDraw :: C (Render ())
 myDraw = do
@@ -447,6 +475,7 @@ renderPlane s (p, m) = do
   mapM_ (\(_,b) -> renderLine b) (IM.toList $ pLines p)
   mapM_ renderZombie (pZombies p)
   renderPlayer $ pPlayer1 p
+  renderPlayer $ pPlayer2 p
   mapM_ renderBullet $ pBullets p
 
   let pos = screenToPlane p $ mouseXY s
@@ -498,3 +527,17 @@ newLine :: C Int
 newLine = do
   change currentPlane newLine'
   gets $ pred . IM.size . pLines . getCurrentPlane
+
+data Message = Shoot | Look Double Double
+
+instance S.Serialize Message where
+  put Shoot = S.put (0 :: Int)
+  put (Look x y) = S.put (1 :: Int) >> S.put x >> S.put y
+  get = do
+    i <- S.get :: S.Get Int
+    case i of
+      0 -> return Shoot
+      1 -> do
+        x <- S.get
+        y <- S.get
+        return $ Look x y
