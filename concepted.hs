@@ -18,6 +18,7 @@ import Graphics.Rendering.Cairo hiding (
   status, versionString, version)
 
 import Control.Concurrent
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State
@@ -263,13 +264,18 @@ main' initialState = do
     return ()
   mainGUI
 
-handler :: CConf -> MVar CState -> Message -> IO ByteString
+handler :: CConf -> MVar CState -> Message -> IO Game
 handler config sVar msg = do
   s <- takeMVar sVar
   s' <- execC config s $ do
     player2 msg
   putMVar sVar s'
-  return "OK"
+  let zs = pZombies p
+      p1 = pPlayer1 p
+      p2 = pPlayer2 p
+      bs = pBullets p
+      p = getCurrentPlane s'
+  return $ Game zs p1 p2 bs
 
 playerShoot player =
   change currentPlane $ \p -> p { pBullets = PlayerBullet (pPosition $ player p)
@@ -350,7 +356,12 @@ myKeyPress k = do
         "x" -> do
           if wserver s
             then playerShoot pPlayer1
-            else liftIO $ send "127.0.0.1" 9000 Shoot
+            else do
+              r <- liftIO $ request 2048 "127.0.0.1" 9000 Shoot
+              case r of
+                Nothing -> liftIO $ putStrLn "unexpected server response"
+                Just (Game a b c d) -> change currentPlane $ \p -> p {
+                  pZombies = a, pPlayer1 = b, pPlayer2 = c, pBullets = d }
         "Up" -> change currentPlane $ pan (0, 20) -- TODO change the zombi mouse info
         "Down" -> change currentPlane $ pan (0, -20)
         "Left" -> change currentPlane $ pan (20, 0)
@@ -541,3 +552,24 @@ instance S.Serialize Message where
         x <- S.get
         y <- S.get
         return $ Look x y
+
+instance S.Serialize Zombie where
+  put (Zombie xy) = S.put xy
+  get = Zombie <$> S.get
+
+instance S.Serialize PlayerInput where
+  put (PlayerInput a b c d) = S.put a >> S.put b >> S.put c >> S.put d
+  get = PlayerInput <$> S.get <*> S.get <*> S.get <*> S.get
+
+instance S.Serialize Player where
+  put (Player a b c d) = S.put a >> S.put b >> S.put c >> S.put d
+  get = Player <$> S.get <*> S.get <*> S.get <*> S.get
+
+instance S.Serialize PlayerBullet where
+  put (PlayerBullet a b) = S.put a >> S.put b
+  get = PlayerBullet <$> S.get <*> S.get
+
+instance S.Serialize Game where
+  put (Game a b c d) = S.put a >> S.put b >> S.put c >> S.put d
+  get = Game <$> S.get <*> S.get <*> S.get <*> S.get
+
