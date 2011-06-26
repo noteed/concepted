@@ -324,6 +324,8 @@ reset = change currentPlane $ \p -> p { pZombies = pZombies emptyPlane }
 
 myKeyPress :: String -> C ()
 myKeyPress k = do
+  sv <- gets wserver
+  let changePlayer = if sv then changePlayer1 else changePlayer2
   b <- handle $ Key k True
   if b
     then return ()
@@ -352,10 +354,10 @@ myKeyPress k = do
           i <- newLine
           modify (\s' -> s' { handlers = HandlerState lineEditor (NewLine i) : handlers s })
           status $ "Editting line #" ++ show i ++ ", press Escape to stop"
-        "z" -> change currentPlane $ \p -> p { pPlayer1 = setUp True $ pPlayer1 p }
-        "q" -> change currentPlane $ \p -> p { pPlayer1 = setLeft True $ pPlayer1 p }
-        "s" -> change currentPlane $ \p -> p { pPlayer1 = setDown True $ pPlayer1 p }
-        "d" -> change currentPlane $ \p -> p { pPlayer1 = setRight True $ pPlayer1 p }
+        "z" -> change currentPlane $ changePlayer $ setUp True
+        "q" -> change currentPlane $ changePlayer $ setLeft True
+        "s" -> change currentPlane $ changePlayer $ setDown True
+        "d" -> change currentPlane $ changePlayer $ setRight True
         "x" -> do
           if wserver s
             then playerShoot pPlayer1
@@ -381,15 +383,17 @@ myKeyPress k = do
 
 myKeyRelease :: String -> C ()
 myKeyRelease k = do
+  sv <- gets wserver
+  let changePlayer = if sv then changePlayer1 else changePlayer2
   b <- handle $ Key k False
   if b
     then return ()
     else do
       case k of
-        "z" -> change currentPlane $ \p -> p { pPlayer1 = setUp False $ pPlayer1 p }
-        "q" -> change currentPlane $ \p -> p { pPlayer1 = setLeft False $ pPlayer1 p }
-        "s" -> change currentPlane $ \p -> p { pPlayer1 = setDown False $ pPlayer1 p }
-        "d" -> change currentPlane $ \p -> p { pPlayer1 = setRight False $ pPlayer1 p }
+        "z" -> change currentPlane $ changePlayer $ setUp False
+        "q" -> change currentPlane $ changePlayer $ setLeft False
+        "s" -> change currentPlane $ changePlayer $ setDown False
+        "d" -> change currentPlane $ changePlayer $ setRight False
         _ -> pass
 
 myLmbPress :: Bool -> Point -> C ()
