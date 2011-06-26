@@ -34,6 +34,9 @@ import qualified Data.Map as M
 import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as C
 import qualified Data.Serialize as S
+import Unsafe.Coerce (unsafeCoerce)
+import Data.Word (Word8, Word64)
+import Data.Bits (bit, testBit, (.|.))
 
 import Network.Silo hiding (handle)
 
@@ -357,7 +360,7 @@ myKeyPress k = do
           if wserver s
             then playerShoot pPlayer1
             else do
-              r <- liftIO $ request 2048 "127.0.0.1" 9000 Shoot
+              r <- liftIO $ request 1024 "127.0.0.1" 9000 Shoot
               case r of
                 Nothing -> liftIO $ putStrLn "unexpected server response"
                 Just (Game a b c d) -> change currentPlane $ \p -> p {
@@ -554,22 +557,49 @@ instance S.Serialize Message where
         return $ Look x y
 
 instance S.Serialize Zombie where
-  put (Zombie xy) = S.put xy
-  get = Zombie <$> S.get
+  put (Zombie xy) = putDoublePair xy
+  get = Zombie <$> getDoublePair
 
 instance S.Serialize PlayerInput where
-  put (PlayerInput a b c d) = S.put a >> S.put b >> S.put c >> S.put d
-  get = PlayerInput <$> S.get <*> S.get <*> S.get <*> S.get
+  put = S.put . playerInputToWord8
+  get = playerInputFromWord8 <$> S.get
 
 instance S.Serialize Player where
-  put (Player a b c d) = S.put a >> S.put b >> S.put c >> S.put d
-  get = Player <$> S.get <*> S.get <*> S.get <*> S.get
+  put (Player a b c d) = putDoublePair a >> S.put b >> S.put c >> putDoublePair d
+  get = Player <$> getDoublePair <*> S.get <*> S.get <*> getDoublePair
 
 instance S.Serialize PlayerBullet where
-  put (PlayerBullet a b) = S.put a >> S.put b
-  get = PlayerBullet <$> S.get <*> S.get
+  put (PlayerBullet a b) = putDoublePair a >> putDoublePair b
+  get = PlayerBullet <$> getDoublePair <*> getDoublePair
 
 instance S.Serialize Game where
   put (Game a b c d) = S.put a >> S.put b >> S.put c >> S.put d
   get = Game <$> S.get <*> S.get <*> S.get <*> S.get
+
+putDoublePair :: (Double, Double) -> S.Put
+putDoublePair (a, b) = putDouble a >> putDouble b
+
+getDoublePair :: S.Get (Double, Double)
+getDoublePair = (,) <$> getDouble <*> getDouble
+
+putDouble :: Double -> S.Put
+putDouble d = S.put (unsafeCoerce d :: Word64)
+
+getDouble :: S.Get Double
+getDouble = S.get >>= return . (unsafeCoerce :: Word64 -> Double)
+
+playerInputToWord8 :: PlayerInput -> Word8
+playerInputToWord8 (PlayerInput a b c d) =
+  a' .|. b' .|. c' .|. d'  
+  where a' = if a then bit 0 else 0
+        b' = if b then bit 1 else 0
+        c' = if c then bit 2 else 0
+        d' = if d then bit 3 else 0
+
+playerInputFromWord8 :: Word8 -> PlayerInput
+playerInputFromWord8 w = PlayerInput a b c d
+  where a = testBit w 0
+        b = testBit w 1
+        c = testBit w 2
+        d = testBit w 3
 
