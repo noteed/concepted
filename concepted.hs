@@ -265,29 +265,39 @@ main' initialState = do
     putStrLn "minizombs in server mode"
     _ <- forkIO $ serve Nothing 9000 $ handler config sVar
     return ()
+  when (not $ wserver initialState) $ do
+    _ <- forkIO $ messageThread config sVar
+    return ()
   mainGUI
 
-handler :: CConf -> MVar CState -> Message -> IO Game
-handler config sVar msg = do
+handler :: CConf -> MVar CState -> [Message] -> IO ()
+handler config sVar msgs = do
   s <- takeMVar sVar
   s' <- execC config s $ do
-    player2 msg
+    mapM_ player2 msgs
   putMVar sVar s'
-  let zs = pZombies p
-      p1 = pPlayer1 p
-      p2 = pPlayer2 p
-      bs = pBullets p
-      p = getCurrentPlane s'
-  return $ Game zs p1 p2 bs
+  return ()
 
 playerShoot player =
   change currentPlane $ \p -> p { pBullets = PlayerBullet (pPosition $ player p)
     (normalize (pMouse (player p) `sub` pPosition (player p)) `muls` 2) : take 20 (pBullets p) }
 
+messageThread config sVar = do
+  s <- takeMVar sVar
+  s' <- execC config s $ do
+    sendMessages
+    processMessages
+  putMVar sVar s'
+  threadDelay (50 * 1000) -- in microseconds -- TODO avoid driftin -- TODO avoid drifting
+  messageThread config sVar
+
+io = liftIO
+
 player2 :: Message -> C ()
 player2 msg = case msg of
-  Shoot -> playerShoot pPlayer2
-  Look x y -> change currentPlane $ changePlayer2 (setMouse (x, y))
+  Shoot -> io (print "shooted") >> playerShoot pPlayer2
+  Look x y -> io (print "looked") >> (change currentPlane $ changePlayer2 (setMouse (x, y)))
+  Move a -> change currentPlane $ changePlayer2 (setInput a)
   _ -> return ()
 
 changePlayer1 f p = p { pPlayer1 = f $ pPlayer1 p }
@@ -361,12 +371,7 @@ myKeyPress k = do
         "x" -> do
           if wserver s
             then playerShoot pPlayer1
-            else do
-              r <- liftIO $ request 1024 "127.0.0.1" 9000 Shoot
-              case r of
-                Nothing -> liftIO $ putStrLn "unexpected server response"
-                Just (Game a b c d) -> change currentPlane $ \p -> p {
-                  pZombies = a, pPlayer1 = b, pPlayer2 = c, pBullets = d }
+            else queue Shoot
         "Up" -> change currentPlane $ pan (0, 20) -- TODO change the zombi mouse info
         "Down" -> change currentPlane $ pan (0, -20)
         "Left" -> change currentPlane $ pan (20, 0)
@@ -441,9 +446,7 @@ myMotion lmb rmb (dx, dy) = do
   let xy' = screenToPlane cp xy
   sv <- gets wserver
   let changePlayer = if sv then changePlayer1 else changePlayer2
-  when (not sv) $ do
-    liftIO $ send "127.0.0.1" 9000 (Look (fst xy') (snd xy'))
-    return ()
+  when (not sv) $ queue (Look (fst xy') (snd xy'))
   change currentPlane $ changePlayer (setMouse xy')
   myMotion' lmb rmb (dx, dy)
 
@@ -546,19 +549,16 @@ newLine = do
   change currentPlane newLine'
   gets $ pred . IM.size . pLines . getCurrentPlane
 
-data Message = Shoot | Look Double Double
-
 instance S.Serialize Message where
-  put Shoot = S.put (0 :: Int)
-  put (Look x y) = S.put (1 :: Int) >> S.put x >> S.put y
+  put Shoot = S.put (0 :: Word8)
+  put (Look x y) = S.put (1 :: Word8) >> putDouble x >> putDouble y
+  put (Move a) = S.put (2 :: Word8) >> S.put a
   get = do
-    i <- S.get :: S.Get Int
+    i <- S.get :: S.Get Word8
     case i of
       0 -> return Shoot
-      1 -> do
-        x <- S.get
-        y <- S.get
-        return $ Look x y
+      1 -> Look <$> getDouble <*> getDouble
+      2 -> Move <$> S.get
 
 instance S.Serialize Zombie where
   put (Zombie xy) = putDoublePair xy
@@ -607,3 +607,30 @@ playerInputFromWord8 w = PlayerInput a b c d
         c = testBit w 2
         d = testBit w 3
 
+sendMessages :: C ()
+sendMessages = do
+  cp <- grab currentPlane
+  --queue (Move . pInput $ pPlayer2 cp)
+  s <- get
+  let f (t, p, _) = t == turn s + 2 && p == wserver s -- send this turn's messages to the other end.
+      g (_, _, m) = m
+      msgs = map g $ filter f $ messages s
+      (host, port) | wserver s = wclient s
+                   | otherwise = ("127.0.0.1", 9000)
+  when (not $ null msgs) $
+    io $ send host port msgs
+
+processMessages :: C ()
+processMessages = do
+  s <- get
+  let f (t, _, _) = t == turn s
+      (before, after) = span f $ messages s
+  mapM_ processMessage before
+  s <- get
+  put s { messages = after, turn = turn s + 1 }
+
+processMessage (_, _, m) = case m of
+  Shoot -> io (print "shooted+++") >> playerShoot pPlayer2
+--  Look x y -> io (print "looked") >> (change currentPlane $ changePlayer2 (setMouse (x, y)))
+--  Move a -> change currentPlane $ changePlayer2 (setInput a)
+  _ -> return ()

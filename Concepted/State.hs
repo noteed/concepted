@@ -42,7 +42,18 @@ data CState = CState
   , wtime :: UTCTime -- last value
   , waccumulated :: Double -- accumulated time (pool of time from which steps are drawn).
   , wserver :: Bool -- ^ is a server (or a client)?
+  , wclient :: (String, Int) -- defined when wserver is True
+  , messages :: [(Int, Bool, Message)] -- turn, true when emitted by server a.k.a. player1
+  , turn :: Int
   }
+
+queue :: Message -> C ()
+queue msg = do
+  s <- get
+  put s { messages = messages s ++ [(turn s + 2, wserver s, msg)] }
+
+data Message = Shoot | Look Double Double | Move PlayerInput
+  deriving Show
 
 cleanState :: CState
 cleanState = CState
@@ -59,6 +70,9 @@ cleanState = CState
   , wtime = undefined
   , waccumulated = 0
   , wserver = False
+  , wclient = ("", 0) -- defined when wserver is True
+  , messages = []
+  , turn = 0
   }
 
 currentPlane :: Cx Plane
