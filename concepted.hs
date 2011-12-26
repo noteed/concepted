@@ -58,6 +58,7 @@ main :: IO ()
 main = (>>= processCmd) . cmdArgs $
   modes
     [ edit
+    , generate
     ]
   &= summary versionString
   &= program "concepted"
@@ -71,6 +72,7 @@ data Cmd =
     Edit
     { editFile :: FilePath
     }
+  | Generate
   deriving (Data, Typeable, Show, Eq)
 
 edit :: Cmd
@@ -80,6 +82,10 @@ edit = Edit
     &= argPos 0
     &= opt ""
   } &= help "Edit a concept map."
+
+generate :: Cmd
+generate = Generate
+  &= help "Generate automatically some vector graphics."
 
 processCmd :: Cmd -> IO ()
 processCmd (Edit "") =
@@ -105,6 +111,9 @@ processCmd (Edit fn) = do
         , Button (240,20) "Quit" (liftIO mainQuit)
         ]
       }
+
+processCmd Generate = do
+  putStrLn "Generating..."
 
 linkSplitter :: Handler (Maybe Int)
 linkSplitter (Key "s" True) Nothing = do
