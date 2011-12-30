@@ -3,9 +3,6 @@
 {-# Language DeriveDataTypeable #-}
 module Concepted.Core where
 
-import Paths_concepted (version)
-import Data.Version (showVersion)
-
 import Graphics.UI.Gtk hiding
   ( eventKeyName, eventButton, eventModifier
   , Menu, Point, Rectangle, Widget
@@ -20,8 +17,6 @@ import Control.Concurrent
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State
-
-import System.Console.CmdArgs.Implicit hiding ((:=))
 
 import Data.List
 import Data.Maybe
@@ -338,3 +333,34 @@ newLine = do
   change currentPlane newLine'
   gets $ pred . IM.size . pLines . getCurrentPlane
 
+generate' :: Int -> Int -> FilePath -> (Int -> Int -> Render ()) -> IO ()
+generate' width height fn draw =
+  withImageSurface FormatARGB32 width height $
+    \surf -> do
+      renderWith surf $ draw width height
+      surfaceWriteToPNG surf fn
+
+example :: Int -> Int -> Render ()
+example width height = do
+  setSourceRGBA 255 255 255 255
+  paint
+
+  identityMatrix
+  once
+  identityMatrix
+  translate w 0
+  once
+  identityMatrix
+  translate 0 h
+  once
+  identityMatrix
+  translate w h
+  once
+
+  where p (x, y) = do
+          setSourceRGBA 0 255 255 255
+          arc x y 1.5 0 (2 * pi)
+          fill
+        w = fromIntegral width
+        h = fromIntegral height
+        once = mapM_ p [(x, y) | x <- [0, 4..w - 5], y <- [0, 4..h - 5]]

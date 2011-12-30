@@ -99,4 +99,5 @@ processCmd (Edit fn) = do
 
 processCmd Generate = do
   putStrLn "Generating..."
+  generate' 200 200 "example.png" example
 
